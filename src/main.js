@@ -1,8 +1,8 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, WALL_H, TICK, segSeg } from './physics.js?v=11';
-import { Dummy } from './ragdoll.js?v=11';
-import { Gore } from './gore.js?v=11';
-import { sfx, music } from './audio.js?v=11';
+import { World, Particle, HALF, WALL_H, TICK, segSeg } from './physics.js?v=12';
+import { Dummy } from './ragdoll.js?v=12';
+import { Gore } from './gore.js?v=12';
+import { sfx, music } from './audio.js?v=12';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -301,12 +301,27 @@ function explode(barrel) {
 }
 
 // explosion at c: throws everything within R, tears up dummies, sets off other explosives
-function blast(c, R = 5) {
+function blast(c, R = 5, rocket = false) {
   sfx.boom(); pulseAll(1, 200);
   const mesh = new THREE.Mesh(blastGeo, new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.9, depthWrite: false }));
   mesh.position.copy(c); scene.add(mesh); explosions.push({ mesh, t: 0, size: R / 5 });
   gore.sparks(c, 40);
-  { const d = headPos().distanceTo(c); if (d < R) damagePlayer(70 * (1 - d / R)); }
+  {
+    // measured from the middle of the player's body
+    const head = headPos(), dx = head.x - c.x, dy = head.y - 0.8 - c.y, dz = head.z - c.z, d = Math.hypot(dx, dy, dz);
+    if (d < R) {
+      const f = 1 - d / R;
+      if (rocket) {
+        // rocket jump: a rocket only stings, and throws you up and away from the blast
+        damagePlayer(10);
+        if (!P.dead && !freecam) {
+          const flat = Math.hypot(dx, dz) || 1;
+          P.vy = Math.max(P.vy, 0) + 3 + 6.5 * f; P.onGround = false;
+          P.vx += dx / flat * 5.5 * f * Math.min(1, flat / 0.6); P.vz += dz / flat * 5.5 * f * Math.min(1, flat / 0.6);
+        }
+      } else damagePlayer(70 * f);
+    }
+  }
   const h = world.dt;
   for (const p of world.particles) {
     const d = p.pos.distanceTo(c);
@@ -388,7 +403,7 @@ function updateExplosives(sdt) {
     if (hit.t <= step + 0.15 || r.life <= 0) {
       const c = r.pos.clone().addScaledVector(r.dir, Math.max(0, Math.min(hit.t, step) - 0.15));
       scene.remove(r.mesh); r.mesh.material.dispose(); rockets.splice(i, 1);
-      blast(c, 5.5);
+      blast(c, 5.5, true);
     } else {
       r.pos.addScaledVector(r.dir, step); r.mesh.position.copy(r.pos);
       gore.sparks(r.pos, 1);
@@ -1268,7 +1283,7 @@ function pushHands() {
 }
 
 // ------------------------------------------------------------ player health + survival mode
-const P = { hp: 100, dead: false, deadT: 0, flash: 0, lastHit: -99, y: 0, vy: 0, onGround: true };
+const P = { hp: 100, dead: false, deadT: 0, flash: 0, lastHit: -99, y: 0, vy: 0, vx: 0, vz: 0, onGround: true };
 const SV = { on: false, wave: 0, queue: 0, inter: 0, spawnT: 0, best: 0 };
 try { SV.best = +(localStorage.getItem('goreLabBest') || 0); } catch { /* private mode */ }
 
@@ -1345,7 +1360,7 @@ function playerDie() {
 }
 function respawn() {
   P.hp = 100; P.dead = false; P.flash = 0;
-  P.y = 0; P.vy = 0;
+  P.y = 0; P.vy = 0; P.vx = 0; P.vz = 0;
   rig.position.set(0, S.height, 1.5);
   for (const d of dummies) d.knockdown(3);
 }
@@ -1440,6 +1455,7 @@ const HELP = [
   ['MOVING', [
     'Left stick: walk.   Right stick: turn.',
     'A: jump. You can get up on crates and the table.',
+    'Rocket jump: fire a rocket at your feet. 10 damage, big boost.',
     'Click either stick in: open or close this menu.',
     'Too tall or too short? Change HEIGHT in this menu.',
     'Desktop: WASD, mouse, Space to jump, M for menu.',
@@ -1603,6 +1619,15 @@ function playerPhysics(dt) {
   }
   P.vy += world.gravity * dt; P.y += P.vy * dt;
   if (P.y <= ground) { P.y = ground; P.vy = 0; P.onGround = true; } else P.onGround = false;
+  // sideways shove from a blast: carries in the air, scrubs off on the ground
+  if (P.vx || P.vz) {
+    rig.position.x += P.vx * dt; rig.position.z += P.vz * dt;
+    const keep = Math.pow(P.onGround ? 0.002 : 0.6, dt);
+    P.vx *= keep; P.vz *= keep;
+    if (Math.abs(P.vx) + Math.abs(P.vz) < 0.05) P.vx = P.vz = 0;
+  }
+  // indoor maps have a ceiling
+  if (MAPS[S.map].wallH === WALL_H && P.y > WALL_H - 1.95) { P.y = WALL_H - 1.95; P.vy = Math.min(P.vy, 0); }
   rig.position.y = S.height + P.y;
 }
 function clampRig() {
