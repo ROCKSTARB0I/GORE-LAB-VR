@@ -25,3 +25,5 @@ button{font:inherit;font-weight:bold;font-size:20px;padding:14px 28px;border:0;b
   background:#e8792b;color:#14171c;cursor:pointer}
 button#playDesktop{background:#2a3038;color:#e6e9ed}
 button:disabled{opacity:.35;cursor:default}
+#spawnHud{position:absolute;left:50%;top:14px;transform:translateX(-50%);padding:6px 14px;border-radius:4px;
+  background:rgba(16,20,26,.8);color:#35e0ff;font-weight:bold;letter-spacing:.06em;white-space:nowrap}
