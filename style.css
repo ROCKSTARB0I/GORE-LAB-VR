@@ -27,3 +27,8 @@ button#playDesktop{background:#2a3038;color:#e6e9ed}
 button:disabled{opacity:.35;cursor:default}
 #spawnHud{position:absolute;left:50%;top:14px;transform:translateX(-50%);padding:6px 14px;border-radius:4px;
   background:rgba(16,20,26,.8);color:#35e0ff;font-weight:bold;letter-spacing:.06em;white-space:nowrap}
+#hp{position:absolute;left:16px;top:42px;width:220px;height:22px;background:#3a1010;border-radius:3px;overflow:hidden;
+  box-shadow:0 0 0 2px rgba(0,0,0,.5)}
+#hpFill{height:100%;width:100%;background:#3fb950}
+#hpText{position:absolute;inset:0;text-align:center;font-weight:bold;font-size:14px;line-height:22px;text-shadow:0 1px 2px #000}
+#waveInfo{position:absolute;left:16px;top:72px;font-weight:bold;letter-spacing:.08em;color:#e8792b;text-shadow:0 1px 4px #000}
