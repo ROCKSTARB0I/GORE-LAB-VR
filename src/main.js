@@ -1,8 +1,8 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, WALL_H, TICK, segSeg } from './physics.js';
-import { Dummy } from './ragdoll.js';
-import { Gore } from './gore.js';
-import { sfx } from './audio.js';
+import { World, Particle, HALF, WALL_H, TICK, segSeg } from './physics.js?v=4';
+import { Dummy } from './ragdoll.js?v=4';
+import { Gore } from './gore.js?v=4';
+import { sfx } from './audio.js?v=4';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -89,7 +89,7 @@ world.boxes.push(TABLE);
   }
 }
 
-const S = { kills: 0, hostile: false, slowmo: false, lowG: false };
+const S = { kills: 0, hostile: false, slowmo: false, lowG: false, god: false };
 const dummies = [], barrels = [], balls = [], tools = [];
 const MAX_DUMMIES = 12;
 
@@ -105,7 +105,7 @@ function spawnDummy(x, z, type = 'dummy') {
   }
   x ??= (Math.random() - 0.5) * 10; z ??= -4.2 - Math.random() * 3;
   const head = headPos();
-  const d = new Dummy(world, scene, gore, x, z, Math.atan2(head.x - x, head.z - z), DUMMY_TYPES[type]);
+  const d = new Dummy(world, scene, gore, x, z, Math.atan2(head.x - x, head.z - z), typeof type === 'object' ? type : DUMMY_TYPES[type]);
   d.onDeath = () => { S.kills++; drawPanel(); };
   dummies.push(d);
   return d;
@@ -156,6 +156,7 @@ function blast(c, R = 5) {
   const mesh = new THREE.Mesh(blastGeo, new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.9, depthWrite: false }));
   mesh.position.copy(c); scene.add(mesh); explosions.push({ mesh, t: 0, size: R / 5 });
   gore.sparks(c, 40);
+  { const d = headPos().distanceTo(c); if (d < R) damagePlayer(70 * (1 - d / R)); }
   const h = world.dt;
   for (const p of world.particles) {
     const d = p.pos.distanceTo(c);
@@ -369,6 +370,8 @@ const MENU = [
     [() => 'Hostile: ' + (S.hostile ? 'ON' : 'OFF'), () => { panelCd = 0; press(4); }],
     [() => 'Slow-mo: ' + (S.slowmo ? 'ON' : 'OFF'), () => { panelCd = 0; press(5); }],
     [() => 'Low gravity: ' + (S.lowG ? 'ON' : 'OFF'), () => { panelCd = 0; press(6); }],
+    [() => 'Survival: ' + (SV.on ? 'ON' : 'OFF'), () => { panelCd = 0; press(8); }],
+    [() => 'God mode: ' + (S.god ? 'ON' : 'OFF'), () => { panelCd = 0; press(9); }],
     ['Clear everything', () => { panelCd = 0; press(3); }],
     ['Reset items', () => { panelCd = 0; press(7); }],
   ] },
@@ -440,7 +443,10 @@ const BUTTONS = [
   [() => 'SLOW-MO: ' + (S.slowmo ? 'ON' : 'OFF'), () => { S.slowmo = !S.slowmo; world.setScale(S.slowmo ? 0.2 : 1); }],
   [() => 'LOW GRAVITY: ' + (S.lowG ? 'ON' : 'OFF'), () => { S.lowG = !S.lowG; world.gravity = S.lowG ? -1.6 : -9.8; }],
   ['RESET ITEMS', () => resetItems()],
+  [() => 'SURVIVAL: ' + (SV.on ? 'ON' : 'OFF'), () => { SV.on ? endSurvival() : startSurvival(); }],
+  [() => 'GOD MODE: ' + (S.god ? 'ON' : 'OFF'), () => { S.god = !S.god; }],
 ];
+const PANEL_ROWS = 5;
 const panelCanvas = document.createElement('canvas'); panelCanvas.width = 832; panelCanvas.height = 704;
 const panelTex = new THREE.CanvasTexture(panelCanvas); panelTex.colorSpace = THREE.SRGBColorSpace;
 {
@@ -454,8 +460,8 @@ function drawPanel() {
   g.fillStyle = '#e8792b'; g.font = 'bold 54px Helvetica, Arial, sans-serif'; g.textBaseline = 'middle'; g.textAlign = 'left';
   g.fillText('GORE LAB', 30, hh / 2);
   g.fillStyle = '#e6e9ed'; g.textAlign = 'right'; g.fillText('KILLS ' + S.kills, W - 30, hh / 2);
-  g.font = 'bold 40px Helvetica, Arial, sans-serif'; g.textAlign = 'center';
-  const bw = W / 2, bh = (H - hh) / 4;
+  g.font = 'bold 38px Helvetica, Arial, sans-serif'; g.textAlign = 'center';
+  const bw = W / 2, bh = (H - hh) / PANEL_ROWS;
   BUTTONS.forEach(([label], i) => {
     const x = (i % 2) * bw, y = hh + Math.floor(i / 2) * bh;
     const text = typeof label === 'function' ? label() : label;
@@ -470,7 +476,7 @@ function drawPanel() {
 function panelIndex(y, z) {
   const u = (z - (PANEL.z - PANEL.w / 2)) / PANEL.w, v = (PANEL.y + PANEL.h / 2 - y) / PANEL.h;
   if (u < 0 || u > 1 || v < PANEL.head || v > 1) return -1;
-  return Math.min(3, Math.floor((v - PANEL.head) / (1 - PANEL.head) * 4)) * 2 + (u < 0.5 ? 0 : 1);
+  return Math.min(PANEL_ROWS - 1, Math.floor((v - PANEL.head) / (1 - PANEL.head) * PANEL_ROWS)) * 2 + (u < 0.5 ? 0 : 1);
 }
 function press(i) {
   if (i < 0 || panelCd > 0) return;
@@ -479,6 +485,7 @@ function press(i) {
   setTimeout(() => { panelFlash = -1; drawPanel(); }, 150);
 }
 function clearAll() {
+  if (SV.on) endSurvival();
   for (const d of dummies) { releaseBody(d); d.dispose(); }
   dummies.length = 0;
   for (const b of barrels) { releaseBody(b); world.removeBody(b); scene.remove(b.mesh); }
@@ -914,6 +921,155 @@ function pushHands() {
   }
 }
 
+// ------------------------------------------------------------ player health + survival mode
+const P = { hp: 100, dead: false, deadT: 0, flash: 0, lastHit: -99 };
+const SV = { on: false, wave: 0, queue: 0, inter: 0, spawnT: 0, best: 0 };
+try { SV.best = +(localStorage.getItem('goreLabBest') || 0); } catch { /* private mode */ }
+
+// red wash over the view when hurt
+const hurtMesh = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 8),
+  new THREE.MeshBasicMaterial({ color: 0xb00000, side: THREE.BackSide, transparent: true, opacity: 0, depthTest: false, depthWrite: false }));
+hurtMesh.renderOrder = 998; hurtMesh.visible = false; camera.add(hurtMesh);
+
+// big text that floats in front of you: wave numbers, deaths
+const bannerCanvas = document.createElement('canvas'); bannerCanvas.width = 1024; bannerCanvas.height = 320;
+const bannerTex = new THREE.CanvasTexture(bannerCanvas); bannerTex.colorSpace = THREE.SRGBColorSpace;
+const bannerMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 0.6),
+  new THREE.MeshBasicMaterial({ map: bannerTex, transparent: true, depthTest: false, depthWrite: false }));
+bannerMesh.position.set(0, 0.28, -2.2); bannerMesh.renderOrder = 999; bannerMesh.visible = false; camera.add(bannerMesh);
+let bannerT = 0;
+function banner(text, sub = '', secs = 2.5) {
+  const g = bannerCanvas.getContext('2d');
+  g.clearRect(0, 0, 1024, 320);
+  g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineJoin = 'round';
+  g.font = 'bold 150px Helvetica, Arial, sans-serif'; g.lineWidth = 18; g.strokeStyle = '#14171c'; g.fillStyle = '#e8792b';
+  g.strokeText(text, 512, 120); g.fillText(text, 512, 120);
+  if (sub) {
+    g.font = 'bold 54px Helvetica, Arial, sans-serif'; g.lineWidth = 10; g.fillStyle = '#f2f4f7';
+    g.strokeText(sub, 512, 255); g.fillText(sub, 512, 255);
+  }
+  bannerTex.needsUpdate = true; bannerT = secs; bannerMesh.visible = true;
+}
+
+// health + wave readout: floats over each wrist in VR, DOM bar on desktop
+const wristCanvas = document.createElement('canvas'); wristCanvas.width = 256; wristCanvas.height = 128;
+const wristTex = new THREE.CanvasTexture(wristCanvas); wristTex.colorSpace = THREE.SRGBColorSpace;
+function makeWristHud() {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(0.1, 0.05), new THREE.MeshBasicMaterial({ map: wristTex }));
+  m.position.set(0, 0.075, 0.13); m.rotation.x = -0.95;
+  return m;
+}
+for (const h of vrHands) h.ctrl.add(makeWristHud());
+let hudKey = '';
+function drawHud() {
+  const hp = Math.max(0, Math.ceil(P.hp));
+  const left = SV.on ? SV.queue + dummies.filter(d => d.wave && d.alive).length : 0;
+  const info = SV.on ? 'WAVE ' + SV.wave + (SV.inter > 0 ? ' incoming' : ' · ' + left + ' left') : '';
+  const key = hp + info + S.god;
+  if (key === hudKey) return;
+  hudKey = key;
+  const g = wristCanvas.getContext('2d');
+  g.fillStyle = '#10141a'; g.fillRect(0, 0, 256, 128);
+  g.fillStyle = '#3a1010'; g.fillRect(12, 12, 232, 52);
+  g.fillStyle = hp > 30 ? '#3fb950' : '#e5484d'; g.fillRect(12, 12, 232 * hp / 100, 52);
+  g.fillStyle = '#fff'; g.font = 'bold 38px Helvetica, Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(S.god ? 'GOD' : hp, 128, 40);
+  g.font = 'bold 26px Helvetica, Arial, sans-serif'; g.fillStyle = '#e8792b';
+  g.fillText(info || 'KILLS ' + S.kills, 128, 96);
+  wristTex.needsUpdate = true;
+  $('hpFill').style.width = hp + '%'; $('hpFill').style.background = hp > 30 ? '#3fb950' : '#e5484d';
+  $('hpText').textContent = S.god ? 'GOD MODE' : hp;
+  $('waveInfo').textContent = info + (SV.on || !SV.best ? '' : 'Best wave ' + SV.best);
+}
+
+function damagePlayer(n) {
+  if (!started || P.dead || S.god || freecam) return;
+  P.hp -= n; P.lastHit = performance.now() / 1000; P.flash = Math.min(0.75, 0.3 + n / 40);
+  sfx.hurt(); pulseAll(0.8, 90);
+  if (P.hp <= 0) playerDie();
+}
+function playerDie() {
+  P.hp = 0; P.dead = true; P.deadT = 3.5;
+  for (const h of [...vrHands, desk]) drop(h);
+  if (SV.on) {
+    const wave = SV.wave;
+    endSurvival();
+    banner('GAME OVER', 'Wave ' + wave + ' · ' + S.kills + ' kills · best wave ' + SV.best, 3.5);
+  } else banner('YOU DIED', '', 3);
+}
+function respawn() {
+  P.hp = 100; P.dead = false; P.flash = 0;
+  rig.position.set(0, 0, 1.5);
+  for (const d of dummies) d.knockdown(3);
+}
+function updatePlayer(dt) {
+  const now = performance.now() / 1000;
+  P.flash = Math.max(0, P.flash - dt * 1.4);
+  if (P.dead) { if ((P.deadT -= dt) <= 0) respawn(); }
+  else {
+    if (!SV.on && now - P.lastHit > 4) P.hp = Math.min(100, P.hp + 8 * dt);
+    // anything hostile within arm's reach hits you
+    const head = headPos(), sdt = dt * world.scale;
+    for (const d of dummies) {
+      if (!d.alive || !(S.hostile || d.aggro)) continue;
+      const reach = d.state === 'stand' ? 1.25 : d.state === 'crawl' ? 0.85 : 0;
+      if (reach && d.stun < 0.4 && Math.hypot(d.p.chest.pos.x - head.x, d.p.chest.pos.z - head.z) < reach) {
+        d.atkT = (d.atkT ?? 0.6) - sdt;
+        if (d.atkT <= 0) { d.atkT = 0.9; damagePlayer(d.state === 'crawl' ? 5 : d.dmg ?? 10); }
+      } else d.atkT = 0.6;
+    }
+  }
+  const op = Math.max(P.flash, P.dead ? 0.8 : 0, !P.dead && P.hp < 30 ? 0.14 + 0.08 * Math.sin(now * 6) : 0);
+  hurtMesh.visible = op > 0.01; hurtMesh.material.opacity = op;
+  if (bannerT > 0) { bannerT -= dt; bannerMesh.material.opacity = Math.min(1, bannerT * 2); if (bannerT <= 0) bannerMesh.visible = false; }
+  drawHud();
+}
+
+function startSurvival() {
+  clearAll();
+  P.hp = 100; P.dead = false;
+  SV.on = true; SV.wave = 0;
+  nextWave();
+}
+function endSurvival() {
+  if (!SV.on) return;
+  SV.on = false;
+  if (SV.wave > SV.best) { SV.best = SV.wave; try { localStorage.setItem('goreLabBest', SV.best); } catch { /* ignore */ } }
+  for (const d of dummies) if (d.wave) d.aggro = false;
+  hudKey = '';
+}
+function nextWave() {
+  SV.wave++; SV.queue = 3 + SV.wave * 2; SV.inter = SV.wave === 1 ? 3 : 6; SV.spawnT = 0;
+  banner('WAVE ' + SV.wave, SV.queue + ' incoming');
+  sfx.wave();
+}
+function updateSurvival(sdt) {
+  if (!SV.on || P.dead) return;
+  if (SV.inter > 0) { SV.inter -= sdt; return; }
+  const alive = dummies.filter(d => d.wave && d.alive).length;
+  SV.spawnT -= sdt;
+  if (SV.queue > 0 && SV.spawnT <= 0 && alive < 8 && (dummies.length < MAX_DUMMIES || dummies.some(d => !d.alive))) {
+    // come in from somewhere away from the player and clear of the table
+    const head = headPos();
+    let x = 0, z = -6;
+    for (let i = 0; i < 20; i++) {
+      x = (Math.random() - 0.5) * 13; z = (Math.random() - 0.5) * 13;
+      if (Math.hypot(x - head.x, z - head.z) > 5 && !(x < -0.9 && z > -4 && z < 1.2)) break;
+    }
+    const brute = SV.wave >= 3 && Math.random() < 0.18;
+    const d = spawnDummy(x, z, brute
+      ? { ...DUMMY_TYPES.brute, aggro: true, speed: 1 }
+      : { ...DUMMY_TYPES.zombie, speed: Math.min(2, 1.15 + SV.wave * 0.07) });
+    d.wave = true; d.dmg = brute ? 20 : 10;
+    SV.queue--; SV.spawnT = Math.max(0.35, 1.1 - SV.wave * 0.06);
+  } else if (SV.queue === 0 && alive === 0) {
+    // wave cleared: patch up, sweep the bodies out, go again
+    P.hp = Math.min(100, P.hp + 25);
+    for (let i = dummies.length - 1; i >= 0; i--) if (!dummies[i].alive) { releaseBody(dummies[i]); dummies[i].dispose(); dummies.splice(i, 1); }
+    nextWave();
+  }
+}
+
 // ------------------------------------------------------------ player movement
 const keys = {};
 let yaw = 0, pitch = 0, locked = false, noLock = false, dragging = false, freecam = false, teleported = false;
@@ -982,7 +1138,7 @@ function vrMove(dt) {
 addEventListener('keydown', e => {
   keys[e.code] = true;
   if (!started || inVR || e.repeat) return;
-  const map = { Digit1: 0, Digit2: 2, Digit5: 1, KeyC: 3, KeyH: 4, KeyT: 5, KeyG: 6, KeyR: 7 };
+  const map = { Digit1: 0, Digit2: 2, Digit5: 1, KeyC: 3, KeyH: 4, KeyT: 5, KeyG: 6, KeyR: 7, KeyV: 8, KeyI: 9 };
   if (e.code in map) { panelCd = 0; press(map[e.code]); }
   if (e.code === 'KeyE') desk.held ? drop(desk) : grab(desk);
   if (e.code === 'KeyQ' || e.code === 'Tab') { e.preventDefault(); menuMove(e.shiftKey ? -1 : 1, 0); }
@@ -1113,6 +1269,8 @@ renderer.setAnimationLoop(time => {
     }
     for (const b of balls) b.mesh.position.copy(b.p.pos);
     updateExplosives(dt * world.scale);
+    updateSurvival(dt * world.scale);
+    updatePlayer(dt);
     gore.sync(time);
     for (const tr of tracers) if (tr.m.visible) { tr.t -= dt; tr.m.material.opacity = Math.max(0, tr.t / 0.07); if (tr.t <= 0) tr.m.visible = false; }
     for (let i = explosions.length - 1; i >= 0; i--) {
@@ -1125,5 +1283,5 @@ renderer.setAnimationLoop(time => {
 });
 
 // for poking at things from the console
-window.lab = { world, dummies, tools, barrels, balls, grenades, mines, rockets, menu, menuMove, S, gore, desk, rig, camera, press, grab, drop, spawnDummy, spawnBarrel,
+window.lab = { P, SV, damagePlayer, startSurvival, world, dummies, tools, barrels, balls, grenades, mines, rockets, menu, menuMove, S, gore, desk, rig, camera, press, grab, drop, spawnDummy, spawnBarrel,
   look(y, p) { yaw = y; pitch = p; }, get state() { return { started, inVR, freecam, locked, noLock }; } };

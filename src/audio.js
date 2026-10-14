@@ -49,5 +49,7 @@ export const sfx = {
   grunt() { const f = 150 + Math.random() * 90; tone('sawtooth', f, f * 0.55, 0.22, 0.22); noise(0.18, 0.12, 900, 'bandpass', 500); },
   spawn() { tone('sine', 400, 1200, 0.12, 0.25); tone('triangle', 800, 1600, 0.1, 0.12); },
   tick() { tone('square', 1100, 1100, 0.03, 0.08); },
+  hurt() { tone('sawtooth', 220, 90, 0.18, 0.35); noise(0.12, 0.4, 600); },
+  wave() { tone('square', 330, 330, 0.12, 0.2); setTimeout(() => tone('square', 495, 495, 0.2, 0.2), 140); },
   beep() { tone('square', 660, 880, 0.08, 0.15); },
 };
