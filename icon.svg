@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <clipPath id="tophalf"><rect x="0" y="150" width="512" height="40"/></clipPath>
+    <radialGradient id="bg" cx="50%" cy="42%" r="70%">
+      <stop offset="0" stop-color="#3a0b0b"/>
+      <stop offset="0.6" stop-color="#170506"/>
+      <stop offset="1" stop-color="#070203"/>
+    </radialGradient>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2e35"/>
+      <stop offset="1" stop-color="#121418"/>
+    </linearGradient>
+    <linearGradient id="word" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffb070"/>
+      <stop offset="0.55" stop-color="#e8792b"/>
+      <stop offset="1" stop-color="#b8461a"/>
+    </linearGradient>
+    <radialGradient id="flash" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#fff6c8"/>
+      <stop offset="0.4" stop-color="#ffc24a"/>
+      <stop offset="1" stop-color="#ff7a1a" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000" flood-opacity="0.8"/>
+    </filter>
+    <!-- one crash-test dummy, standing, origin at its feet -->
+    <g id="dummy">
+      <rect x="-9" y="-48" width="8" height="48" rx="4" fill="#25324a"/>
+      <rect x="1" y="-48" width="8" height="48" rx="4" fill="#25324a"/>
+      <rect x="-15" y="-96" width="30" height="50" rx="6" fill="#e8792b"/>
+      <rect x="-23" y="-94" width="8" height="40" rx="4" fill="#d9b48c"/>
+      <rect x="15" y="-94" width="8" height="40" rx="4" fill="#d9b48c"/>
+      <rect x="-4" y="-104" width="8" height="10" fill="#d9b48c"/>
+      <circle cx="0" cy="-116" r="14" fill="#e2be98"/>
+      <circle cx="-5" cy="-118" r="2.2" fill="#1a1010"/>
+      <circle cx="5" cy="-118" r="2.2" fill="#1a1010"/>
+    </g>
+  </defs>
+
+  <rect width="512" height="512" fill="url(#bg)"/>
+
+  <!-- floor and a spreading pool -->
+  <rect x="0" y="462" width="512" height="50" fill="#120709"/>
+  <ellipse cx="256" cy="476" rx="220" ry="20" fill="#5e0606" opacity="0.85"/>
+  <ellipse cx="130" cy="474" rx="80" ry="10" fill="#7a0808"/>
+  <ellipse cx="390" cy="478" rx="80" ry="10" fill="#7a0808"/>
+
+  <!-- tracer rounds coming in from the left -->
+  <g stroke-linecap="round">
+    <line x1="-10" y1="300" x2="58" y2="326" stroke="#ffe7a0" stroke-width="5" opacity="0.9"/>
+    <line x1="-10" y1="350" x2="380" y2="380" stroke="#ffe7a0" stroke-width="4" opacity="0.75"/>
+    <line x1="-10" y1="270" x2="420" y2="350" stroke="#ffe7a0" stroke-width="3" opacity="0.6"/>
+  </g>
+
+  <!-- left dummy: knocked backwards, head blown off -->
+  <g transform="translate(120 472) scale(1.45) rotate(-24)">
+    <rect x="-9" y="-48" width="8" height="48" rx="4" fill="#25324a"/>
+    <rect x="1" y="-48" width="8" height="48" rx="4" fill="#25324a"/>
+    <rect x="-15" y="-96" width="30" height="50" rx="6" fill="#e8792b"/>
+    <rect x="-23" y="-94" width="8" height="40" rx="4" fill="#d9b48c" transform="rotate(25 -19 -94)"/>
+    <rect x="15" y="-94" width="8" height="40" rx="4" fill="#d9b48c" transform="rotate(-40 19 -94)"/>
+    <ellipse cx="0" cy="-100" rx="9" ry="5" fill="#8a0606"/>
+  </g>
+  <!-- the burst where its head was -->
+  <g fill="#9a0a0a">
+    <circle cx="62" cy="330" r="10"/><circle cx="38" cy="312" r="7"/><circle cx="80" cy="300" r="5"/>
+    <circle cx="26" cy="344" r="5"/><circle cx="52" cy="288" r="4"/><circle cx="92" cy="322" r="4"/><circle cx="20" cy="300" r="3"/>
+    <rect x="30" y="272" width="13" height="9" fill="#e2be98" transform="rotate(30 36 276)"/>
+    <rect x="86" y="280" width="10" height="8" fill="#efe6cf" transform="rotate(-20 91 284)"/>
+  </g>
+
+  <!-- right dummy: still up, taking hits, arm flying off -->
+  <g transform="translate(390 472) scale(1.45) rotate(8)">
+    <use href="#dummy"/>
+  </g>
+  <rect x="452" y="300" width="11" height="56" rx="5" fill="#d9b48c" transform="rotate(55 457 328)"/>
+  <circle cx="440" cy="346" r="7" fill="#9a0a0a"/><circle cx="462" cy="336" r="5" fill="#9a0a0a"/><circle cx="478" cy="356" r="4" fill="#9a0a0a"/><circle cx="452" cy="318" r="3" fill="#9a0a0a"/>
+  <circle cx="380" cy="380" r="20" fill="url(#flash)"/>
+  <circle cx="420" cy="350" r="16" fill="url(#flash)"/>
+
+  <!-- the logo -->
+  <g filter="url(#shadow)">
+    <rect x="44" y="130" width="424" height="122" rx="18" fill="url(#plate)" stroke="#e8792b" stroke-width="5"/>
+    <text x="256" y="218" text-anchor="middle" font-family="Impact, 'Arial Black', Helvetica, Arial, sans-serif" font-weight="900" font-size="84" letter-spacing="3" fill="#2a0a04" stroke="#2a0a04" stroke-width="10" stroke-linejoin="round">GORE-LAB</text>
+    <text x="256" y="218" text-anchor="middle" font-family="Impact, 'Arial Black', Helvetica, Arial, sans-serif" font-weight="900" font-size="84" letter-spacing="3" fill="#f08a38">GORE-LAB</text>
+    <text x="256" y="216" text-anchor="middle" font-family="Impact, 'Arial Black', Helvetica, Arial, sans-serif" font-weight="900" font-size="84" letter-spacing="3" fill="#ffc890" opacity="0.35" clip-path="url(#tophalf)">GORE-LAB</text>
+  </g>
+  <!-- blood running off the sign -->
+  <g fill="#a00c0c">
+    <path d="M120 250 q4 0 4 6 v26 q0 8 -4 8 q-4 0 -4 -8 v-26 q0 -6 4 -6z"/>
+    <circle cx="120" cy="296" r="4"/>
+    <path d="M300 250 q3 0 3 5 v14 q0 6 -3 6 q-3 0 -3 -6 v-14 q0 -5 3 -5z"/>
+    <path d="M396 250 q4 0 4 6 v34 q0 9 -4 9 q-4 0 -4 -9 v-34 q0 -6 4 -6z"/>
+    <circle cx="396" cy="306" r="4.5"/>
+    <path d="M196 250 q2.5 0 2.5 4 v9 q0 4 -2.5 4 q-2.5 0 -2.5 -4 v-9 q0 -4 2.5 -4z"/>
+  </g>
+  <!-- splatter on the plate -->
+  <g fill="#a00c0c" opacity="0.9">
+    <circle cx="70" cy="144" r="9"/><circle cx="86" cy="138" r="4"/><circle cx="58" cy="156" r="3"/>
+    <circle cx="452" cy="236" r="7"/><circle cx="440" cy="244" r="3.5"/>
+  </g>
+</svg>
