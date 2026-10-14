@@ -2,7 +2,7 @@
 // walking pose while alive ("active ragdoll"), goes limp when dead, and can
 // lose its head and limbs.
 import * as THREE from '../vendor/three.module.js';
-import { Particle, HALF, segSeg } from './physics.js?v=22';
+import { Particle, HALF, segSeg } from './physics.js?v=23';
 
 // rest pose, facing +Z
 const REST = {

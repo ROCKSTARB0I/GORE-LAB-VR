@@ -1,8 +1,8 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=22';
-import { Dummy, faceTex } from './ragdoll.js?v=22';
-import { Gore } from './gore.js?v=22';
-import { sfx, music } from './audio.js?v=22';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=23';
+import { Dummy, faceTex } from './ragdoll.js?v=23';
+import { Gore } from './gore.js?v=23';
+import { sfx, music } from './audio.js?v=23';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -347,7 +347,8 @@ function addMirror(g, x, y, z, w, h) {
   const mat = new THREE.ShaderMaterial({
     uniforms: { tDiffuse: { value: rt.texture }, textureMatrix: { value: new THREE.Matrix4() }, tint: { value: new THREE.Color(0xe8eef4) } },
     vertexShader: 'uniform mat4 textureMatrix; varying vec4 vUv; void main() { vUv = textureMatrix * modelMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-    fragmentShader: 'uniform sampler2D tDiffuse; uniform vec3 tint; varying vec4 vUv; void main() { vec4 c = texture2DProj(tDiffuse, vUv); gl_FragColor = vec4(c.rgb * tint, 1.0); #include <colorspace_fragment> }',
+    // (#include has to sit on its own line)
+    fragmentShader: 'uniform sampler2D tDiffuse; uniform vec3 tint; varying vec4 vUv;\nvoid main() {\n  vec4 c = texture2DProj(tDiffuse, vUv);\n  gl_FragColor = vec4(c.rgb * tint, 1.0);\n  #include <colorspace_fragment>\n}',
   });
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
   mesh.position.set(x, y, z); mesh.rotation.y = Math.PI / 2; g.add(mesh);
