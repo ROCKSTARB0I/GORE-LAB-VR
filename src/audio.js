@@ -271,13 +271,17 @@ sfx.loadVoices = () => { if (ac) loadVoices(); };
 sfx.voice = (ev, pos, type, scale = 1) => {
   if (!ac || voicesPlaying > 3) return;
   voicesPlaying++; setTimeout(() => voicesPlaying--, 900);
-  const out = spatial(pos), pitch = (type === 'runner' ? 1.15 : 1) / scale;
+  // everything goes through one gain so the line can be cut off when the speaker says something more important
+  const out = ac.createGain(), pitch = (type === 'runner' ? 1.15 : 1) / scale;
+  out.connect(spatial(pos));
+  const line = { end: ac.currentTime + 1.1, stop() { out.gain.setTargetAtTime(0, ac.currentTime, 0.03); line.end = 0; } };
   const recorded = (VOICE_EVENTS[ev] || []).filter(id => voiceBufs[id]);
   if (recorded.length) {
     const src = ac.createBufferSource();
     src.buffer = voiceBufs[recorded[Math.floor(Math.random() * recorded.length)]];
     src.playbackRate.value = pitch; src.connect(out); src.start();
-    return;
+    line.end = ac.currentTime + src.buffer.duration / pitch;
+    return line;
   }
   const p = pitch * (0.9 + Math.random() * 0.2);
   switch (ev) {
@@ -292,7 +296,9 @@ sfx.voice = (ev, pos, type, scale = 1) => {
     case 'bomber': cry(out, 240 * p, 300 * p, 0.5, 0.4, 6); break;
     default: cry(out, 200 * p, 160 * p, 0.25, 0.3);
   }
+  return line;
 };
+sfx.now = () => ac ? ac.currentTime : 0;
 
 // ---------------------------------------------------------------- ambience
 // birdsong by day in the backyard, crickets at night

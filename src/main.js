@@ -1,9 +1,9 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=28';
-import { Dummy, faceTex } from './ragdoll.js?v=28';
-import { Gore } from './gore.js?v=28';
-import { sfx, music } from './audio.js?v=28';
-import { net, SHIRTS, host as netHost, join as netJoin, send, sendPose, updateVoices, setMuted } from './net.js?v=28';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=29';
+import { Dummy, faceTex } from './ragdoll.js?v=29';
+import { Gore } from './gore.js?v=29';
+import { sfx, music } from './audio.js?v=29';
+import { net, SHIRTS, host as netHost, join as netJoin, send, sendPose, updateVoices, setMuted } from './net.js?v=29';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -2580,11 +2580,14 @@ function updateMainMenu() {
 
 // ------------------------------------------------------------ voices
 const ALWAYS = new Set(['die', 'burnDie', 'heart', 'passout', 'dismember']);
+// One voice per dummy: a big line (death, losing a limb...) cuts off whatever he was
+// saying; anything else waits until he's finished talking.
 Dummy.onSay = (d, ev) => {
-  const now = performance.now() / 1000;
-  if (!ALWAYS.has(ev) && now - (d.saidAt ?? -9) < 1.6) return;
+  const now = performance.now() / 1000, talking = d.line && d.line.end > sfx.now();
+  if (!ALWAYS.has(ev) && (talking || now - (d.saidAt ?? -9) < 1.6)) return;
+  if (talking) d.line.stop();
   d.saidAt = now;
-  sfx.voice?.(ev, d.p.chest.pos, d.type, d.s);
+  d.line = sfx.voice?.(ev, d.p.chest.pos, d.type, d.s) ?? null;
 };
 
 // ------------------------------------------------------------ fire
