@@ -249,10 +249,10 @@ const GUNS = {
   spawngun: { name: 'Spawn gun', len: 0.25, spawner: true, cool: 0.3, kick: 0.05, muzzle: [0, 0.03, -0.27] },
   pistol: { name: 'Pistol', len: 0.2, cool: 0.13, pellets: 1, spread: 0.004, dmg: 1, push: 3.5, kick: 0.25, muzzle: [0, 0.03, -0.18] },
   revolver: { name: 'Revolver', len: 0.24, cool: 0.4, pellets: 1, spread: 0.002, dmg: 3, push: 7, kick: 0.7, gib: true, sound: 'revolver', muzzle: [0, 0.035, -0.23] },
-  smg: { name: 'SMG', len: 0.3, auto: true, cool: 0.075, pellets: 1, spread: 0.02, dmg: 0.7, push: 2.5, kick: 0.1, sound: 'smg', muzzle: [0, 0.035, -0.27] },
-  rifle: { name: 'Assault rifle', len: 0.55, auto: true, cool: 0.1, pellets: 1, spread: 0.012, dmg: 1.3, push: 3.5, kick: 0.14, sound: 'rifle', muzzle: [0, 0.04, -0.6] },
-  shotgun: { name: 'Shotgun', len: 0.62, cool: 0.65, pellets: 9, spread: 0.06, dmg: 1, push: 3.2, kick: 0.5, gib: true, sound: 'shotgun', muzzle: [0, 0.04, -0.62] },
-  rocket: { name: 'Rocket launcher', len: 0.7, cool: 1.0, rocket: true, kick: 0.4, sound: 'rocket', muzzle: [0, 0.06, -0.66] },
+  smg: { twoHand: true, name: 'SMG', len: 0.3, auto: true, cool: 0.075, pellets: 1, spread: 0.02, dmg: 0.7, push: 2.5, kick: 0.1, sound: 'smg', muzzle: [0, 0.035, -0.27] },
+  rifle: { twoHand: true, name: 'Assault rifle', len: 0.55, auto: true, cool: 0.1, pellets: 1, spread: 0.012, dmg: 1.3, push: 3.5, kick: 0.14, sound: 'rifle', muzzle: [0, 0.04, -0.6] },
+  shotgun: { twoHand: true, name: 'Shotgun', len: 0.62, cool: 0.65, pellets: 9, spread: 0.06, dmg: 1, push: 3.2, kick: 0.5, gib: true, sound: 'shotgun', muzzle: [0, 0.04, -0.62] },
+  rocket: { twoHand: true, name: 'Rocket launcher', len: 0.7, cool: 1.0, rocket: true, kick: 0.4, sound: 'rocket', muzzle: [0, 0.06, -0.66] },
   knife: { name: 'Knife', len: 0.27, melee: true, blade: 0.4, dmg: 2, tiltVR: 0.25, tiltDesk: 0.1, thrust: true },
   machete: { name: 'Machete', len: 0.66, melee: true, blade: 0.2, dmg: 4 },
   katana: { name: 'Katana', len: 0.98, melee: true, blade: 0.22, dmg: 6 },
@@ -335,6 +335,7 @@ function makeTool(kind, x, y, z) {
 }
 function removeTool(t) {
   if (t.held) { t.held.held = null; t.held = null; }
+  if (t.support) { t.support.held = null; t.support = null; }
   world.removeBody(t); scene.remove(t.mesh);
   tools.splice(tools.indexOf(t), 1);
 }
@@ -583,8 +584,12 @@ function grab(h) {
   if (h.held) return;
   let best = null, bd = 0.2;
   for (const t of tools) {
-    if (t.held) continue;
     const d = Math.sqrt(segSeg(h.pos, h.pos, t.a.pos, t.b.pos));
+    if (t.held) {
+      // second hand on a long gun someone is already holding: steady it
+      if (t.held !== h && t.def.twoHand && !t.support && d < 0.16 && d < bd) { bd = d; best = { type: 'support', tool: t }; }
+      continue;
+    }
     if (d < bd) { bd = d; best = { type: 'tool', tool: t }; }
   }
   for (const p of world.particles) {
@@ -614,6 +619,7 @@ function grab(h) {
   }
   if (!best) return;
   h.held = best;
+  if (best.type === 'support') { best.tool.support = h; pulse(h, 0.4, 40); return; }
   if (best.type === 'tool') {
     const t = best.tool;
     if (t.stuck) {
@@ -637,6 +643,13 @@ function drop(h) {
   const held = h.held;
   if (!held) return;
   h.held = null;
+  if (held.type === 'support') { held.tool.support = null; return; }
+  if (held.type === 'tool' && held.tool.support) {
+    // the steadying hand keeps hold of the gun
+    const t = held.tool, sup = t.support;
+    t.support = null; t.held = sup; sup.held = { type: 'tool', tool: t };
+    return;
+  }
   const ps = held.type === 'tool' ? [held.tool.a, held.tool.b] : [held.p];
   if (held.type === 'tool') held.tool.held = null;
   for (const p of ps) { p.pinned = false; p.prev.copy(p.pos).addScaledVector(h.vel, -TICK); }
@@ -647,7 +660,7 @@ function releaseBody(body) {
   for (const h of [...vrHands, desk]) if (h.held?.type === 'particle' && h.held.p.body === body) { h.held.p.pinned = false; h.held = null; }
 }
 
-const TOOL_TILT = new THREE.Quaternion();
+const TOOL_TILT = new THREE.Quaternion(), aimM = new THREE.Matrix4();
 let spawnDotOn = false;
 function updateHand(h, dt) {
   h.prevPos.copy(h.pos);
@@ -692,6 +705,12 @@ function updateHand(h, dt) {
     t.recoil = Math.max(0, t.recoil - dt * 4);
     tq.copy(h.quat);
     if (t.def.melee) tq.multiply(TOOL_TILT.setFromAxisAngle(tv.set(1, 0, 0), inVR ? t.def.tiltVR ?? 1.0 : t.def.tiltDesk ?? 0.45));
+    if (t.support && h.pos.distanceTo(t.support.pos) > 0.12) {
+      // two-handed: the barrel runs from the trigger hand to the front hand
+      aimM.lookAt(h.pos, t.support.pos, tv.set(0, 1, 0).applyQuaternion(h.quat));
+      tq.setFromRotationMatrix(aimM);
+    }
+    (t.aimQ ??= new THREE.Quaternion()).copy(tq);
     tv.copy(NEG_Z).applyQuaternion(tq);
     t.a.pos.copy(h.pos); t.b.pos.copy(h.pos).addScaledVector(tv, t.def.len);
     t.a.prev.copy(t.a.pos); t.b.prev.copy(t.b.pos);
@@ -700,7 +719,7 @@ function updateHand(h, dt) {
     t.mesh.updateMatrixWorld(true);
     if (t.def.spawner) {
       t.muzzle.getWorldPosition(fromV);
-      spawnDot.position.copy(spawnAim(h.ctrl ? fromV : h.aimFrom, dirV.copy(NEG_Z).applyQuaternion(h.quat)));
+      spawnDot.position.copy(spawnAim(h.ctrl ? fromV : h.aimFrom, dirV.copy(NEG_Z).applyQuaternion(t.aimQ)));
       spawnDotOn = true;
     }
     if (t.def.melee) melee(h, t, dt);
@@ -750,11 +769,13 @@ function hitscan(o, d) {
 
 function fire(h, t) {
   const def = t.def;
-  t.cool = def.cool; t.recoil = def.kick; t.flashT = 0.05; t.flash.visible = true;
+  const steady = t.support ? 0.4 : 1;
+  t.cool = def.cool; t.recoil = def.kick * (t.support ? 0.5 : 1); t.flashT = 0.05; t.flash.visible = true;
+  if (t.support) pulse(t.support, 0.6, 50);
   t.muzzle.getWorldPosition(fromV);
   // on desktop aim through the crosshair, not along the offset gun
   const o = h.ctrl ? fromV : h.aimFrom;
-  dirV.copy(NEG_Z).applyQuaternion(h.quat);
+  dirV.copy(NEG_Z).applyQuaternion(t.aimQ);
   if (def.spawner) {
     const p = spawnAim(o, dirV), item = MENU[menu.cat].items[menu.idx[menu.cat]];
     item[1](p.clone());
@@ -765,8 +786,9 @@ function fire(h, t) {
   if (def.rocket) { spawnRocket(fromV, dirV); return; }
   const hitsPer = new Map();
   for (let i = 0; i < def.pellets; i++) {
-    dirV.copy(NEG_Z).applyQuaternion(h.quat);
-    dirV.x += (Math.random() - 0.5) * 2 * def.spread; dirV.y += (Math.random() - 0.5) * 2 * def.spread; dirV.z += (Math.random() - 0.5) * 2 * def.spread;
+    const sp = def.spread * steady;
+    dirV.copy(NEG_Z).applyQuaternion(t.aimQ);
+    dirV.x += (Math.random() - 0.5) * 2 * sp; dirV.y += (Math.random() - 0.5) * 2 * sp; dirV.z += (Math.random() - 0.5) * 2 * sp;
     dirV.normalize();
     const r = hitscan(o, dirV);
     hitPt.copy(o).addScaledVector(dirV, r.t);
