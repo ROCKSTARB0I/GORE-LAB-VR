@@ -1,8 +1,8 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, WALL_H, TICK, segSeg } from './physics.js?v=4';
-import { Dummy } from './ragdoll.js?v=4';
-import { Gore } from './gore.js?v=4';
-import { sfx } from './audio.js?v=4';
+import { World, Particle, HALF, WALL_H, TICK, segSeg } from './physics.js?v=5';
+import { Dummy } from './ragdoll.js?v=5';
+import { Gore } from './gore.js?v=5';
+import { sfx, music } from './audio.js?v=5';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -24,7 +24,7 @@ camera.position.set(0, 1.65, 0);
 rig.add(camera);
 rig.position.set(0, 0, 1.5);
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f99, 2.4));
+const hemi = new THREE.HemisphereLight(0xffffff, 0x8a8f99, 2.4); scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffffff, 1.4); sun.position.set(3, 8, 5); scene.add(sun);
 
 function canvasTex(w, h, draw) {
@@ -34,42 +34,185 @@ function canvasTex(w, h, draw) {
   return t;
 }
 
-// room: bright tiled test chamber so the mess shows up
-{
-  const tile = canvasTex(256, 256, (g, w, h) => {
-    g.fillStyle = '#c9cdd3'; g.fillRect(0, 0, w, h);
-    g.strokeStyle = '#9aa0a8'; g.lineWidth = 4; g.strokeRect(0, 0, w, h);
-    g.strokeStyle = '#b7bcc3'; g.lineWidth = 2; g.beginPath(); g.moveTo(w / 2, 0); g.lineTo(w / 2, h); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke();
+// ------------------------------------------------------------ maps
+// Every map shares the same 16 x 16 m play space; they differ in looks,
+// lighting and the solid boxes (crates etc.) standing in it.
+function tiled(tex, rx, ry) { tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(rx, ry); return tex; }
+function noiseTex(base, spread, extra) {
+  return canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = base; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 2600; i++) {
+      const v = Math.floor(Math.random() * spread);
+      g.fillStyle = `rgba(${Math.random() < 0.5 ? 255 : 0},${Math.random() < 0.5 ? 255 : 0},${Math.random() < 0.5 ? 255 : 0},${v / 255})`;
+      g.fillRect(Math.random() * w, Math.random() * h, 2 + Math.random() * 3, 2 + Math.random() * 3);
+    }
+    extra?.(g, w, h);
   });
-  tile.wrapS = tile.wrapT = THREE.RepeatWrapping; tile.repeat.set(HALF, HALF);
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(HALF * 2, HALF * 2), new THREE.MeshLambertMaterial({ map: tile }));
-  floor.rotation.x = -Math.PI / 2; scene.add(floor);
-
-  const wallTex = canvasTex(256, 256, (g, w, h) => {
-    g.fillStyle = '#e6e9ed'; g.fillRect(0, 0, w, h);
-    g.strokeStyle = '#cfd4da'; g.lineWidth = 3; g.strokeRect(0, 0, w, h);
-  });
-  wallTex.wrapS = wallTex.wrapT = THREE.RepeatWrapping; wallTex.repeat.set(HALF, WALL_H / 2);
-  const wallMat = new THREE.MeshLambertMaterial({ map: wallTex });
-  const stripeMat = new THREE.MeshBasicMaterial({ color: 0xe8792b });
+}
+function addFloor(g, mat) {
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(HALF * 2, HALF * 2), mat);
+  floor.rotation.x = -Math.PI / 2; g.add(floor);
+}
+function addWalls(g, height, mat, stripe) {
   for (let i = 0; i < 4; i++) {
-    const wall = new THREE.Mesh(new THREE.PlaneGeometry(HALF * 2, WALL_H), wallMat);
     const a = i * Math.PI / 2;
-    wall.position.set(-Math.sin(a) * HALF, WALL_H / 2, -Math.cos(a) * HALF);
-    wall.rotation.y = a;
-    scene.add(wall);
-    const stripe = new THREE.Mesh(new THREE.PlaneGeometry(HALF * 2, 0.12), stripeMat);
-    stripe.position.set(-Math.sin(a) * (HALF - 0.01), 0.06, -Math.cos(a) * (HALF - 0.01));
-    stripe.rotation.y = a;
-    scene.add(stripe);
+    const wall = new THREE.Mesh(new THREE.PlaneGeometry(HALF * 2, height), mat);
+    wall.position.set(-Math.sin(a) * HALF, height / 2, -Math.cos(a) * HALF); wall.rotation.y = a; g.add(wall);
+    if (stripe) {
+      const st = new THREE.Mesh(new THREE.PlaneGeometry(HALF * 2, 0.12), stripe);
+      st.position.set(-Math.sin(a) * (HALF - 0.01), 0.06, -Math.cos(a) * (HALF - 0.01)); st.rotation.y = a; g.add(st);
+    }
   }
-  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(HALF * 2, HALF * 2), new THREE.MeshLambertMaterial({ color: 0x8d939c }));
-  ceil.rotation.x = Math.PI / 2; ceil.position.y = WALL_H; scene.add(ceil);
-  const lampMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-  for (const x of [-4, 4]) for (const z of [-4, 4]) {
-    const lamp = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.05, 0.5), lampMat);
-    lamp.position.set(x, WALL_H - 0.03, z); scene.add(lamp);
+}
+// solid box you can't walk or shoot through; returns its collision AABB
+function addBlock(g, boxes, mat, x, y, z, w, h, d) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y + h / 2, z); g.add(m);
+  boxes.push({ min: new V3(x - w / 2, y, z - d / 2), max: new V3(x + w / 2, y + h, z + d / 2) });
+}
+
+const MAPS = {
+  lab: {
+    name: 'Lab', bg: 0x20242b, hemi: [0xffffff, 0x8a8f99, 2.4], sun: [0xffffff, 1.4], wallH: WALL_H,
+    build(g) {
+      const tile = tiled(canvasTex(256, 256, (c, w, h) => {
+        c.fillStyle = '#c9cdd3'; c.fillRect(0, 0, w, h);
+        c.strokeStyle = '#9aa0a8'; c.lineWidth = 4; c.strokeRect(0, 0, w, h);
+        c.strokeStyle = '#b7bcc3'; c.lineWidth = 2; c.beginPath(); c.moveTo(w / 2, 0); c.lineTo(w / 2, h); c.moveTo(0, h / 2); c.lineTo(w, h / 2); c.stroke();
+      }), HALF, HALF);
+      addFloor(g, new THREE.MeshLambertMaterial({ map: tile }));
+      const wallTex = tiled(canvasTex(256, 256, (c, w, h) => {
+        c.fillStyle = '#e6e9ed'; c.fillRect(0, 0, w, h);
+        c.strokeStyle = '#cfd4da'; c.lineWidth = 3; c.strokeRect(0, 0, w, h);
+      }), HALF, WALL_H / 2);
+      addWalls(g, WALL_H, new THREE.MeshLambertMaterial({ map: wallTex }), new THREE.MeshBasicMaterial({ color: 0xe8792b }));
+      const ceil = new THREE.Mesh(new THREE.PlaneGeometry(HALF * 2, HALF * 2), new THREE.MeshLambertMaterial({ color: 0x8d939c }));
+      ceil.rotation.x = Math.PI / 2; ceil.position.y = WALL_H; g.add(ceil);
+      const lampMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+      for (const x of [-4, 4]) for (const z of [-4, 4]) {
+        const lamp = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.05, 0.5), lampMat);
+        lamp.position.set(x, WALL_H - 0.03, z); g.add(lamp);
+      }
+    },
+  },
+  warehouse: {
+    name: 'Warehouse', bg: 0x0c0d10, hemi: [0xffe6c4, 0x3a3a36, 1.5], sun: [0xffd9a0, 0.9], wallH: WALL_H,
+    build(g, boxes) {
+      const floorTex = tiled(noiseTex('#6f706c', 26, (c, w, h) => {
+        c.strokeStyle = 'rgba(40,40,40,.5)'; c.lineWidth = 2; c.strokeRect(0, 0, w, h);
+      }), HALF / 2, HALF / 2);
+      addFloor(g, new THREE.MeshLambertMaterial({ map: floorTex }));
+      const wallTex = tiled(canvasTex(128, 128, (c, w, h) => {
+        for (let x = 0; x < w; x += 16) { const gr = c.createLinearGradient(x, 0, x + 16, 0); gr.addColorStop(0, '#2f4a4d'); gr.addColorStop(0.5, '#4d6f72'); gr.addColorStop(1, '#2a4245'); c.fillStyle = gr; c.fillRect(x, 0, 16, h); }
+        c.fillStyle = 'rgba(120,60,20,.25)'; c.fillRect(0, h - 22, w, 22);
+      }), HALF * 2, 1);
+      addWalls(g, WALL_H, new THREE.MeshLambertMaterial({ map: wallTex }), new THREE.MeshBasicMaterial({ color: 0xd9b000 }));
+      const ceil = new THREE.Mesh(new THREE.PlaneGeometry(HALF * 2, HALF * 2), new THREE.MeshLambertMaterial({ color: 0x24262a }));
+      ceil.rotation.x = Math.PI / 2; ceil.position.y = WALL_H; g.add(ceil);
+      const lampMat = new THREE.MeshBasicMaterial({ color: 0xffd9a0 }), rodMat = new THREE.MeshLambertMaterial({ color: 0x18191c });
+      for (const x of [-4.5, 0, 4.5]) for (const z of [-4.5, 2.5]) {
+        const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.35, 0.25, 12), lampMat); lamp.position.set(x, WALL_H - 1, z); g.add(lamp);
+        const rod = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.9, 0.03), rodMat); rod.position.set(x, WALL_H - 0.45, z); g.add(rod);
+      }
+      const crate = new THREE.MeshLambertMaterial({ map: canvasTex(128, 128, (c, w, h) => {
+        c.fillStyle = '#9a6a35'; c.fillRect(0, 0, w, h);
+        c.strokeStyle = '#5e3d1b'; c.lineWidth = 10; c.strokeRect(5, 5, w - 10, h - 10);
+        c.lineWidth = 8; c.beginPath(); c.moveTo(8, 8); c.lineTo(w - 8, h - 8); c.stroke();
+        c.strokeStyle = 'rgba(60,35,10,.35)'; c.lineWidth = 2; for (let y = 24; y < h; y += 24) { c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke(); }
+      }) });
+      for (const [x, z, sz, n] of [[3.6, -2.6, 1.1, 2], [4.8, -2.6, 1.1, 1], [-5.5, -6.2, 1.3, 1], [5.8, 3.4, 1.0, 2], [-5.2, 4.8, 1.1, 1], [0.8, -7.1, 1.2, 1], [-6.6, -1, 1.0, 1], [2.2, 5.8, 1.2, 1]]) {
+        for (let i = 0; i < n; i++) addBlock(g, boxes, crate, x, i * sz, z, sz, sz, sz);
+      }
+      const shelf = new THREE.MeshLambertMaterial({ color: 0x8a3b1e });
+      addBlock(g, boxes, shelf, 7.3, 0, -5, 1.0, 2.6, 4);
+    },
+  },
+  rooftop: {
+    name: 'Rooftop', bg: 0x070914, hemi: [0x9fb0ff, 0x1c1e2c, 1.25], sun: [0xbfd0ff, 0.9], wallH: 1.1,
+    build(g, boxes) {
+      addFloor(g, new THREE.MeshLambertMaterial({ map: tiled(noiseTex('#3a3d44', 30), HALF / 2, HALF / 2) }));
+      addWalls(g, 1.1, new THREE.MeshLambertMaterial({ color: 0x70747c }), new THREE.MeshBasicMaterial({ color: 0xff3df2 }));
+      const cap = new THREE.MeshLambertMaterial({ color: 0x8a8f98 });
+      for (let i = 0; i < 4; i++) {
+        const a = i * Math.PI / 2, m = new THREE.Mesh(new THREE.BoxGeometry(HALF * 2 + 0.4, 0.08, 0.4), cap);
+        m.position.set(-Math.sin(a) * (HALF + 0.1), 1.12, -Math.cos(a) * (HALF + 0.1)); m.rotation.y = a; g.add(m);
+      }
+      // city around and below
+      const winTex = canvasTex(64, 128, (c, w, h) => {
+        c.fillStyle = '#0b0d16'; c.fillRect(0, 0, w, h);
+        for (let y = 4; y < h; y += 8) for (let x = 4; x < w; x += 8) if (Math.random() < 0.4) { c.fillStyle = Math.random() < 0.8 ? '#ffd98a' : '#8ad1ff'; c.fillRect(x, y, 4, 5); }
+      });
+      const tower = new THREE.MeshBasicMaterial({ map: winTex });
+      for (let i = 0; i < 34; i++) {
+        const a = i / 34 * Math.PI * 2 + Math.random() * 0.1, r = 22 + Math.random() * 30, w = 5 + Math.random() * 7, top = -8 + Math.random() * 30;
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w, 60, w), tower);
+        m.position.set(Math.sin(a) * r, top - 30, Math.cos(a) * r); g.add(m);
+      }
+      const street = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshBasicMaterial({ color: 0x05060c }));
+      street.rotation.x = -Math.PI / 2; street.position.y = -40; g.add(street);
+      const starPos = [];
+      for (let i = 0; i < 500; i++) { const a = Math.random() * Math.PI * 2, e = 0.15 + Math.random() * 1.35; starPos.push(Math.cos(a) * Math.cos(e) * 90, Math.sin(e) * 90, Math.sin(a) * Math.cos(e) * 90); }
+      const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(starPos, 3));
+      g.add(new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xffffff, size: 0.5, sizeAttenuation: true })));
+      const moon = new THREE.Mesh(new THREE.SphereGeometry(4, 20, 14), new THREE.MeshBasicMaterial({ color: 0xf2f0e0 }));
+      moon.position.set(30, 55, -60); g.add(moon);
+      const metal = new THREE.MeshLambertMaterial({ color: 0x9aa2ab });
+      addBlock(g, boxes, metal, 4.5, 0, -4.5, 1.8, 1.2, 1.2);
+      addBlock(g, boxes, metal, -5.5, 0, 4.5, 1.2, 1.4, 1.8);
+      addBlock(g, boxes, new THREE.MeshLambertMaterial({ color: 0x5c6068 }), 5.5, 0, 5, 2.4, 2.5, 2.4);
+    },
+  },
+  backyard: {
+    name: 'Backyard', bg: 0x8ec9f0, hemi: [0xffffff, 0x7fa860, 2.3], sun: [0xfff3d0, 1.9], wallH: 1.8,
+    build(g, boxes) {
+      addFloor(g, new THREE.MeshLambertMaterial({ map: tiled(noiseTex('#5f9a45', 34), HALF, HALF) }));
+      const fence = tiled(canvasTex(128, 128, (c, w, h) => {
+        for (let x = 0; x < w; x += 32) { c.fillStyle = x % 64 ? '#a9773f' : '#b98448'; c.fillRect(x, 0, 30, h); c.fillStyle = '#6b4a25'; c.fillRect(x + 30, 0, 2, h); }
+        c.fillStyle = 'rgba(70,45,20,.5)'; c.fillRect(0, 24, w, 6); c.fillRect(0, 96, w, 6);
+      }), HALF, 1);
+      addWalls(g, 1.8, new THREE.MeshLambertMaterial({ map: fence }));
+      const ground = new THREE.Mesh(new THREE.CircleGeometry(90, 24), new THREE.MeshLambertMaterial({ color: 0x6aa64e }));
+      ground.rotation.x = -Math.PI / 2; ground.position.y = -0.02; g.add(ground);
+      const trunk = new THREE.MeshLambertMaterial({ color: 0x6b4a2a }), leaf = new THREE.MeshLambertMaterial({ color: 0x3d7f3a });
+      for (let i = 0; i < 16; i++) {
+        const a = i / 16 * Math.PI * 2 + 0.2, r = 13 + Math.random() * 9, hgt = 3 + Math.random() * 3;
+        const t = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.35, hgt, 8), trunk); t.position.set(Math.sin(a) * r, hgt / 2, Math.cos(a) * r); g.add(t);
+        const l = new THREE.Mesh(new THREE.IcosahedronGeometry(1.8 + Math.random() * 1.2, 1), leaf); l.position.set(Math.sin(a) * r, hgt + 1.2, Math.cos(a) * r); g.add(l);
+      }
+      const cloud = new THREE.MeshBasicMaterial({ color: 0xffffff });
+      for (let i = 0; i < 9; i++) {
+        const c = new THREE.Mesh(new THREE.SphereGeometry(6 + Math.random() * 5, 10, 8), cloud);
+        c.scale.y = 0.3; c.position.set((Math.random() - 0.5) * 140, 32 + Math.random() * 12, (Math.random() - 0.5) * 140); g.add(c);
+      }
+      const sunBall = new THREE.Mesh(new THREE.SphereGeometry(5, 16, 12), new THREE.MeshBasicMaterial({ color: 0xfff6c0 }));
+      sunBall.position.set(40, 70, 30); g.add(sunBall);
+      addBlock(g, boxes, new THREE.MeshLambertMaterial({ color: 0x9c4a2e }), 5.8, 0, -5.8, 2.6, 2.3, 2.6);   // shed
+      addBlock(g, boxes, new THREE.MeshLambertMaterial({ color: 0xd8d2c4 }), -5.5, 0, 5.5, 2.0, 0.45, 1.0);  // bench
+    },
+  },
+};
+const MAP_KEYS = Object.keys(MAPS);
+let mapGroup = null;
+function setMap(key) {
+  if (!MAPS[key]) key = 'lab';
+  const def = MAPS[key];
+  if (mapGroup) {
+    scene.remove(mapGroup);
+    mapGroup.traverse(o => { o.geometry?.dispose(); if (o.material) { o.material.map?.dispose(); o.material.dispose(); } });
   }
+  mapGroup = new THREE.Group();
+  const boxes = [];
+  def.build(mapGroup, boxes);
+  scene.add(mapGroup);
+  scene.background.setHex(def.bg);
+  hemi.color.setHex(def.hemi[0]); hemi.groundColor.setHex(def.hemi[1]); hemi.intensity = def.hemi[2];
+  sun.color.setHex(def.sun[0]); sun.intensity = def.sun[1];
+  world.boxes = [TABLE, ...boxes];
+  gore.clear(); gore.wallH = def.wallH;
+  S.map = key; saveSettings(); drawMenu(); drawPanel(); drawMainMenu();
+}
+function insideBox(x, z, pad = 0.5) {
+  return world.boxes.some(b => x > b.min.x - pad && x < b.max.x + pad && z > b.min.z - pad && z < b.max.z + pad);
 }
 
 // ------------------------------------------------------------ world
@@ -89,7 +232,14 @@ world.boxes.push(TABLE);
   }
 }
 
-const S = { kills: 0, hostile: false, slowmo: false, lowG: false, god: false };
+const S = { kills: 0, hostile: false, slowmo: false, lowG: false, god: false, map: 'lab', track: 0, height: 0 };
+try { const o = JSON.parse(localStorage.getItem('goreLabSettings') || '{}'); for (const k of ['map', 'track', 'height']) if (k in o) S[k] = o[k]; if ('vol' in o) music.setVolume(o.vol); } catch { /* defaults */ }
+function saveSettings() { try { localStorage.setItem('goreLabSettings', JSON.stringify({ map: S.map, track: S.track, height: S.height, vol: music.volume })); } catch { /* ignore */ } }
+function setTrack(i) { S.track = i; music.play(i); saveSettings(); drawMenu(); drawMainMenu(); }
+function setVolume(v) { music.setVolume(v); saveSettings(); drawMenu(); drawMainMenu(); }
+function setHeight(v) { S.height = Math.round(Math.max(-0.8, Math.min(0.8, v)) * 100) / 100; saveSettings(); drawMenu(); drawMainMenu(); }
+const fmtHeight = () => (S.height >= 0 ? '+' : '\u2212') + Math.abs(S.height * 100).toFixed(0) + ' cm';
+const trackName = () => S.track < 0 ? 'Off' : music.tracks[S.track].name;
 const dummies = [], barrels = [], balls = [], tools = [];
 const MAX_DUMMIES = 12;
 
@@ -376,6 +526,20 @@ const MENU = [
     ['Reset items', () => { panelCd = 0; press(7); }],
   ] },
 ];
+MENU.push(
+  { name: 'MUSIC', items: [
+    [() => (S.track < 0 ? '\u25B6 ' : '') + 'Music off', () => setTrack(-1)],
+    ...music.tracks.map((t, i) => [() => (S.track === i ? '\u25B6 ' : '') + t.name, () => setTrack(i)]),
+    [() => 'Volume + (' + Math.round(music.volume * 100) + '%)', () => setVolume(music.volume + 0.1)],
+    [() => 'Volume \u2212 (' + Math.round(music.volume * 100) + '%)', () => setVolume(music.volume - 0.1)],
+  ] },
+  { name: 'MAPS', items: MAP_KEYS.map(k => [() => (S.map === k ? '\u25B6 ' : '') + MAPS[k].name, () => setMap(k)]) },
+);
+MENU[3].items.push(
+  [() => 'Height up (' + fmtHeight() + ')', () => setHeight(S.height + 0.05)],
+  [() => 'Height down (' + fmtHeight() + ')', () => setHeight(S.height - 0.05)],
+  ['Main menu', () => openMenu()],
+);
 const menu = { cat: 0, idx: MENU.map(() => 0) };
 const menuCanvas = document.createElement('canvas'); menuCanvas.width = menuCanvas.height = 512;
 const menuTex = new THREE.CanvasTexture(menuCanvas); menuTex.colorSpace = THREE.SRGBColorSpace;
@@ -445,8 +609,10 @@ const BUTTONS = [
   ['RESET ITEMS', () => resetItems()],
   [() => 'SURVIVAL: ' + (SV.on ? 'ON' : 'OFF'), () => { SV.on ? endSurvival() : startSurvival(); }],
   [() => 'GOD MODE: ' + (S.god ? 'ON' : 'OFF'), () => { S.god = !S.god; }],
+  ['MAIN MENU', () => openMenu()],
+  [() => 'MAP: ' + MAPS[S.map].name.toUpperCase(), () => setMap(MAP_KEYS[(MAP_KEYS.indexOf(S.map) + 1) % MAP_KEYS.length])],
 ];
-const PANEL_ROWS = 5;
+const PANEL_ROWS = 6;
 const panelCanvas = document.createElement('canvas'); panelCanvas.width = 832; panelCanvas.height = 704;
 const panelTex = new THREE.CanvasTexture(panelCanvas); panelTex.colorSpace = THREE.SRGBColorSpace;
 {
@@ -674,7 +840,7 @@ function updateHand(h, dt) {
   if (h.ctrl) {
     h.active = !!h.src && h.ctrl.visible;
     h.ctrl.getWorldPosition(h.pos); h.ctrl.getWorldQuaternion(h.quat);
-    h.ray.visible = !h.held;
+    h.ray.visible = !h.held || paused;
     const gp = h.src?.gamepad;
     h.trigV = gp?.buttons[0]?.value ?? (h.trigger ? 1 : 0); h.gripV = gp?.buttons[1]?.value ?? 0;
   } else {
@@ -729,7 +895,8 @@ function updateHand(h, dt) {
       spawnDot.position.copy(spawnAim(h.ctrl ? fromV : h.aimFrom, dirV.copy(NEG_Z).applyQuaternion(t.aimQ)));
       spawnDotOn = true;
     }
-    if (t.def.melee) melee(h, t, dt);
+    if (paused) h.hasTip = false;
+    else if (t.def.melee) melee(h, t, dt);
     else {
       t.cool -= dt;
       const want = t.def.auto ? h.trigger : (h.trigger && !h.wasTrigger);
@@ -762,7 +929,7 @@ function hitscan(o, d) {
   if (d.x > 0) take((HALF - o.x) / d.x, 'wall'); else if (d.x < 0) take((-HALF - o.x) / d.x, 'wall');
   if (d.z > 0) take((HALF - o.z) / d.z, 'wall'); else if (d.z < 0) take((-HALF - o.z) / d.z, 'wall');
   if (d.y > 0) take((WALL_H - o.y) / d.y, 'wall'); else if (d.y < 0) take(-o.y / d.y, 'wall');
-  take(rayBox(o, d, TABLE), 'wall');
+  for (const b of world.boxes) take(rayBox(o, d, b), 'wall');
   if (d.x > 0) {
     const t = (PANEL.x - 0.02 - o.x) / d.x, i = panelIndex(o.y + d.y * t, o.z + d.z * t);
     if (i >= 0) take(t, 'panel', { index: i });
@@ -999,7 +1166,7 @@ function playerDie() {
 }
 function respawn() {
   P.hp = 100; P.dead = false; P.flash = 0;
-  rig.position.set(0, 0, 1.5);
+  rig.position.set(0, S.height, 1.5);
   for (const d of dummies) d.knockdown(3);
 }
 function updatePlayer(dt) {
@@ -1054,7 +1221,7 @@ function updateSurvival(sdt) {
     let x = 0, z = -6;
     for (let i = 0; i < 20; i++) {
       x = (Math.random() - 0.5) * 13; z = (Math.random() - 0.5) * 13;
-      if (Math.hypot(x - head.x, z - head.z) > 5 && !(x < -0.9 && z > -4 && z < 1.2)) break;
+      if (Math.hypot(x - head.x, z - head.z) > 5 && !insideBox(x, z)) break;
     }
     const brute = SV.wave >= 3 && Math.random() < 0.18;
     const d = spawnDummy(x, z, brute
@@ -1068,6 +1235,109 @@ function updateSurvival(sdt) {
     for (let i = dummies.length - 1; i >= 0; i--) if (!dummies[i].alive) { releaseBody(dummies[i]); dummies[i].dispose(); dummies.splice(i, 1); }
     nextWave();
   }
+}
+
+// ------------------------------------------------------------ main menu (floating panel, pauses the game)
+let paused = false, played = false;
+const UI = { w: 1.7, h: 1.5, hover: -1, side: 0, follow: 0, head: 180, rowH: 120 };
+UI.canvas = document.createElement('canvas'); UI.canvas.width = 1024; UI.canvas.height = 900;
+UI.tex = new THREE.CanvasTexture(UI.canvas); UI.tex.colorSpace = THREE.SRGBColorSpace;
+UI.mesh = new THREE.Mesh(new THREE.PlaneGeometry(UI.w, UI.h), new THREE.MeshBasicMaterial({ map: UI.tex }));
+UI.mesh.visible = false; scene.add(UI.mesh);
+UI.dots = [0, 1].map(() => { const d = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffffff })); d.visible = false; scene.add(d); return d; });
+// sel: true = the left half steps back, the right half steps forward
+const UI_ROWS = [
+  { label: () => played ? 'RESUME' : 'PLAY SANDBOX', act: () => closeMenu() },
+  { label: () => SV.on ? 'RESTART SURVIVAL' : 'PLAY SURVIVAL', act: () => { closeMenu(); startSurvival(); } },
+  { sel: true, label: () => 'MAP:  ' + MAPS[S.map].name, act: d => setMap(MAP_KEYS[(MAP_KEYS.indexOf(S.map) + d + MAP_KEYS.length) % MAP_KEYS.length]) },
+  { sel: true, label: () => 'MUSIC:  ' + trackName(), act: d => setTrack((S.track + 1 + d + music.tracks.length + 1) % (music.tracks.length + 1) - 1) },
+  { sel: true, label: () => 'MUSIC VOLUME:  ' + Math.round(music.volume * 100) + '%', act: d => setVolume(music.volume + d * 0.1) },
+  { sel: true, label: () => 'HEIGHT:  ' + fmtHeight(), act: d => setHeight(S.height + d * 0.05) },
+];
+function drawMainMenu() {
+  if (!UI.mesh.visible) return;
+  const g = UI.canvas.getContext('2d'), W = 1024, H = 900;
+  g.fillStyle = '#14171c'; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#e8792b'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = 'bold 110px Helvetica, Arial, sans-serif'; g.fillText('GORE LAB', W / 2, 80);
+  g.fillStyle = '#8b94a1'; g.font = '30px Helvetica, Arial, sans-serif';
+  g.fillText(inVR ? 'point and pull the trigger · click a stick to open this menu' : 'click to choose · M opens this menu', W / 2, 152);
+  UI_ROWS.forEach((r, i) => {
+    const y = UI.head + i * UI.rowH, hot = i === UI.hover;
+    g.fillStyle = hot ? '#e8792b' : i < 2 ? '#3a2a1c' : '#2a3038'; g.fillRect(40, y + 8, W - 80, UI.rowH - 16);
+    g.fillStyle = hot ? '#14171c' : '#f2f4f7'; g.font = 'bold 50px Helvetica, Arial, sans-serif';
+    g.fillText(r.label(), W / 2, y + UI.rowH / 2);
+    if (r.sel) {
+      g.font = 'bold 64px Helvetica, Arial, sans-serif';
+      g.globalAlpha = hot && UI.side < 0 ? 1 : 0.5; g.fillText('◀', 96, y + UI.rowH / 2);
+      g.globalAlpha = hot && UI.side > 0 ? 1 : 0.5; g.fillText('▶', W - 96, y + UI.rowH / 2);
+      g.globalAlpha = 1;
+    }
+  });
+  UI.tex.needsUpdate = true;
+}
+function placeMenu() {
+  const head = headPos();
+  camera.getWorldDirection(tv); tv.y = 0;
+  if (tv.lengthSq() < 0.01) tv.set(0, 0, -1);
+  tv.normalize();
+  UI.mesh.position.copy(head).addScaledVector(tv, 1.9);
+  UI.mesh.position.y = Math.max(1.0, head.y - 0.05);
+  UI.mesh.lookAt(head.x, UI.mesh.position.y, head.z);
+}
+function openMenu() {
+  paused = true; UI.mesh.visible = true; UI.hover = -1;
+  for (const h of [...vrHands, desk]) h.trigger = false;
+  rig.updateMatrixWorld(true); placeMenu(); drawMainMenu();
+}
+function closeMenu() {
+  paused = false; played = true; UI.mesh.visible = false;
+  for (const d of UI.dots) d.visible = false;
+  hudKey = '';
+}
+// where a ray meets the menu panel: {row, side, point} or null
+const uiQ = new THREE.Quaternion(), uiO = new V3(), uiD = new V3(), uiPt = new V3();
+function menuPoint(o, d) {
+  uiQ.copy(UI.mesh.quaternion).invert();
+  uiO.copy(o).sub(UI.mesh.position).applyQuaternion(uiQ); uiD.copy(d).applyQuaternion(uiQ);
+  if (uiD.z > -1e-4) return null;
+  const t = -uiO.z / uiD.z, x = uiO.x + uiD.x * t, y = uiO.y + uiD.y * t;
+  const u = x / UI.w + 0.5, v = 0.5 - y / UI.h;
+  if (t < 0 || u < 0 || u > 1 || v < 0 || v > 1) return null;
+  const row = Math.floor((v * 900 - UI.head) / UI.rowH);
+  uiPt.copy(o).addScaledVector(d, t - 0.01);
+  return { row: row >= 0 && row < UI_ROWS.length ? row : -1, side: u < 0.5 ? -1 : 1, point: uiPt };
+}
+function menuActivate(hit) {
+  if (!hit || hit.row < 0) return;
+  const r = UI_ROWS[hit.row];
+  sfx.beep(); r.act(r.sel ? hit.side : 0);
+  drawMainMenu();
+}
+// desktop: aim the menu with the mouse cursor, or the crosshair once the mouse is captured
+function deskMenuRay() {
+  if (locked) return tv.copy(NEG_Z).applyQuaternion(camera.getWorldQuaternion(tq));
+  return tv.set(mouseN.x, mouseN.y, 0.5).unproject(camera).sub(headPos()).normalize();
+}
+function menuClick() { menuActivate(menuPoint(headPos(), deskMenuRay())); }
+function updateMainMenu() {
+  if (UI.follow > 0) { UI.follow--; placeMenu(); }
+  let hover = -1, side = 0;
+  const point = (i, o, d) => {
+    const hit = menuPoint(o, d);
+    UI.dots[i].visible = !!hit;
+    if (hit) { UI.dots[i].position.copy(hit.point); if (hit.row >= 0) { hover = hit.row; side = hit.side; } }
+    return hit;
+  };
+  if (inVR) {
+    vrHands.forEach((h, i) => {
+      if (!h.active) { UI.dots[i].visible = false; return; }
+      const hit = point(i, h.pos, tv.copy(NEG_Z).applyQuaternion(h.quat));
+      if (h.trigger && !h.menuWas) menuActivate(hit);
+      h.menuWas = h.trigger;
+    });
+  } else point(0, headPos(), deskMenuRay());
+  if (paused && (hover !== UI.hover || side !== UI.side)) { UI.hover = hover; UI.side = side; drawMainMenu(); }
 }
 
 // ------------------------------------------------------------ player movement
@@ -1095,7 +1365,7 @@ function desktopMove(dt) {
     const sp = (keys.ShiftLeft ? 5.5 : 3.2) * dt;
     rig.position.x += (-Math.sin(yaw) * f + Math.cos(yaw) * s) * sp;
     rig.position.z += (-Math.cos(yaw) * f - Math.sin(yaw) * s) * sp;
-    rig.position.y = 0;
+    rig.position.y = S.height;
     clampRig();
   }
 }
@@ -1125,6 +1395,11 @@ function vrMove(dt) {
       rig.rotation.y += a;
       teleported = true;
     } else if (Math.abs(ax) < 0.3) h.snapped = false;
+    // clicking either stick opens / closes the main menu
+    const click = !!gp.buttons[3]?.pressed;
+    if (click && !h.stickWas) paused ? closeMenu() : openMenu();
+    h.stickWas = click;
+    if (paused) continue;
     // face buttons: right A = spawn, B = slow-mo; left X = hostile, Y = clear
     for (let i = 0; i < 2; i++) {
       const down = !!gp.buttons[4 + i]?.pressed;
@@ -1132,14 +1407,19 @@ function vrMove(dt) {
       h.btn[i] = down;
     }
   }
+  rig.position.y = S.height;
   clampRig();
 }
 
 addEventListener('keydown', e => {
   keys[e.code] = true;
   if (!started || inVR || e.repeat) return;
-  const map = { Digit1: 0, Digit2: 2, Digit5: 1, KeyC: 3, KeyH: 4, KeyT: 5, KeyG: 6, KeyR: 7, KeyV: 8, KeyI: 9 };
+  if (e.code === 'BracketLeft') setHeight(S.height - 0.05);
+  if (e.code === 'BracketRight') setHeight(S.height + 0.05);
+  const map = paused ? {} : { Digit1: 0, Digit2: 2, Digit5: 1, KeyC: 3, KeyH: 4, KeyT: 5, KeyG: 6, KeyR: 7, KeyV: 8, KeyI: 9 };
   if (e.code in map) { panelCd = 0; press(map[e.code]); }
+  if (e.code === 'KeyM') { paused ? closeMenu() : openMenu(); return; }
+  if (paused) return;
   if (e.code === 'KeyE') desk.held ? drop(desk) : grab(desk);
   if (e.code === 'KeyQ' || e.code === 'Tab') { e.preventDefault(); menuMove(e.shiftKey ? -1 : 1, 0); }
   if (e.code === 'KeyZ') menuMove(0, -1);
@@ -1153,6 +1433,7 @@ canvas.addEventListener('mousedown', e => {
   sfx.init();
   if (e.button === 2) { desk.held ? drop(desk) : grab(desk); return; }
   if (e.button !== 0) return;
+  if (paused) { mouseN.x = e.clientX / innerWidth * 2 - 1; mouseN.y = 1 - e.clientY / innerHeight * 2; menuClick(); return; }
   dragging = true;
   if (!locked && !noLock) { try { canvas.requestPointerLock()?.catch?.(() => { noLock = true; }); } catch { noLock = true; } }
   desk.trigger = true;
@@ -1168,7 +1449,9 @@ canvas.addEventListener('mousedown', e => {
   }
 });
 addEventListener('mouseup', e => { if (e.button === 0) { dragging = false; desk.trigger = false; } });
+const mouseN = { x: 0, y: 0 };
 addEventListener('mousemove', e => {
+  mouseN.x = e.clientX / innerWidth * 2 - 1; mouseN.y = 1 - e.clientY / innerHeight * 2;
   if (inVR || !(locked || dragging)) return;
   yaw -= e.movementX * 0.0024; pitch -= e.movementY * 0.0024;
 });
@@ -1185,7 +1468,9 @@ function begin() {
   $('screen').hidden = true;
   resetItems(); spawnBarrel(3.5, -5.5);
   spawnDummy(-2, -4.5); spawnDummy(0.5, -5.5); spawnDummy(2.5, -4);
-  drawPanel();
+  setMap(S.map);
+  music.play(S.track);
+  openMenu();
 }
 $('playDesktop').addEventListener('click', () => { begin(); $('hud').hidden = false; });
 $('enterVR').addEventListener('click', async () => {
@@ -1200,7 +1485,8 @@ $('enterVR').addEventListener('click', async () => {
     await renderer.xr.setSession(session);
     drop(desk); inVR = true; freecam = false; desk.glove.visible = false;
     $('hud').hidden = true;
-    rig.position.set(0, 0, 1.5); rig.rotation.y = 0;
+    rig.position.set(0, S.height, 1.5); rig.rotation.y = 0;
+    UI.follow = 30;   // keep the menu in front until the headset pose arrives
     camera.position.set(0, 0, 0); camera.rotation.set(0, 0, 0);
   } catch (err) {
     $('vrNote').textContent = 'Could not start VR: ' + err.message;
@@ -1244,7 +1530,7 @@ renderer.setAnimationLoop(time => {
     teleported = false;
 
     const head = headPos();
-    acc += dt;
+    if (paused) updateMainMenu(); else acc += dt;
     let n = 0;
     while (acc >= TICK && n < 4) {
       for (const d of dummies) d.tick(world.dt, head, S.hostile || d.aggro);
@@ -1268,9 +1554,11 @@ renderer.setAnimationLoop(time => {
       b.mesh.quaternion.setFromUnitVectors(UP, tv.subVectors(b.b.pos, b.a.pos).normalize());
     }
     for (const b of balls) b.mesh.position.copy(b.p.pos);
-    updateExplosives(dt * world.scale);
-    updateSurvival(dt * world.scale);
-    updatePlayer(dt);
+    if (!paused) {
+      updateExplosives(dt * world.scale);
+      updateSurvival(dt * world.scale);
+      updatePlayer(dt);
+    }
     gore.sync(time);
     for (const tr of tracers) if (tr.m.visible) { tr.t -= dt; tr.m.material.opacity = Math.max(0, tr.t / 0.07); if (tr.t <= 0) tr.m.visible = false; }
     for (let i = explosions.length - 1; i >= 0; i--) {
@@ -1283,5 +1571,5 @@ renderer.setAnimationLoop(time => {
 });
 
 // for poking at things from the console
-window.lab = { P, SV, damagePlayer, startSurvival, world, dummies, tools, barrels, balls, grenades, mines, rockets, menu, menuMove, S, gore, desk, rig, camera, press, grab, drop, spawnDummy, spawnBarrel,
+window.lab = { UI, UI_ROWS, MAPS, setMap, setTrack, setHeight, openMenu, closeMenu, menuActivate, music, get paused() { return paused; }, P, SV, damagePlayer, startSurvival, world, dummies, tools, barrels, balls, grenades, mines, rockets, menu, menuMove, S, gore, desk, rig, camera, press, grab, drop, spawnDummy, spawnBarrel,
   look(y, p) { yaw = y; pitch = p; }, get state() { return { started, inVR, freecam, locked, noLock }; } };

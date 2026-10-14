@@ -1,6 +1,6 @@
 // Blood droplets, splat decals, bleeding stumps and gib chunks.
 import * as THREE from '../vendor/three.module.js';
-import { Particle, HALF, WALL_H } from './physics.js?v=4';
+import { Particle, HALF, WALL_H } from './physics.js?v=5';
 
 const N_DROPS = 600, N_DECALS = 900, N_GIBS = 48;
 const BLOOD = new THREE.Color(0x8a0303), SPARK = new THREE.Color(0xffd27a);
@@ -50,6 +50,7 @@ export class Gore {
     this.gibBody = {};
 
     this.emitters = [];
+    this.wallH = WALL_H;
   }
 
   drop(x, y, z, vx, vy, vz, size, spark = false) {
@@ -146,7 +147,7 @@ export class Gore {
         }
       }
       if (surf >= 0 || this.life[i] <= 0) {
-        if (surf >= 0 && surf < 5 && !this.spark[i]) this.decal(P[a], P[a + 1], P[a + 2], surf, this.size[i] * (2.5 + Math.random() * 4));
+        if (surf >= 0 && surf < 5 && !this.spark[i] && (surf === 4 || P[a + 1] < this.wallH)) this.decal(P[a], P[a + 1], P[a + 2], surf, this.size[i] * (2.5 + Math.random() * 4));
         this.life[i] = 0;
       }
     }
