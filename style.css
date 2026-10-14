@@ -32,3 +32,14 @@ button:disabled{opacity:.35;cursor:default}
 #hpFill{height:100%;width:100%;background:#3fb950}
 #hpText{position:absolute;inset:0;text-align:center;font-weight:bold;font-size:14px;line-height:22px;text-shadow:0 1px 2px #000}
 #waveInfo{position:absolute;left:16px;top:72px;font-weight:bold;letter-spacing:.08em;color:#e8792b;text-shadow:0 1px 4px #000}
+
+/* multiplayer lobby on the start screen */
+#mp { margin: 18px auto 6px; padding: 14px 18px 4px; max-width: 520px; background: rgba(255,255,255,.04); border: 1px solid rgba(232,121,43,.35); border-radius: 14px; }
+#mp h2 { margin: 0 0 10px; font-size: 18px; letter-spacing: 2px; text-transform: uppercase; color: #e8792b; }
+#mp .row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 10px; }
+#mp input { font: inherit; font-size: 17px; padding: 10px 12px; border-radius: 10px; border: 1px solid #3a4048; background: #12151a; color: #f2f4f7; min-width: 0; }
+#mpName { width: 100%; max-width: 320px; }
+#mpCode { width: 6.5em; text-transform: uppercase; letter-spacing: 4px; text-align: center; }
+#mp button:disabled, #mp input:disabled { opacity: .5; }
+#mpCodeBig { font-size: 44px; font-weight: 900; letter-spacing: 10px; color: #f08a38; margin: 2px 0 6px; }
+#mpStatus { min-height: 1.4em; }

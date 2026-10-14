@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#e8792b">
-<link rel="stylesheet" href="style.css?v=26">
+<link rel="stylesheet" href="style.css?v=28">
 </head>
 <body>
 <canvas id="view" tabindex="0"></canvas>
@@ -37,6 +37,19 @@
     <button id="playDesktop">Play on desktop</button>
   </div>
   <p id="vrNote"></p>
+  <div id="mp">
+    <h2>Multiplayer</h2>
+    <div class="row">
+      <input id="mpName" maxlength="16" placeholder="Username" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="row">
+      <button id="mpHost">Host a game</button>
+      <input id="mpCode" maxlength="4" placeholder="CODE" autocomplete="off" spellcheck="false">
+      <button id="mpJoin">Join</button>
+    </div>
+    <div id="mpCodeBig" hidden></div>
+    <p id="mpStatus" class="small">Pick a username, then host a game or type a friend's room code. Or skip this and play alone.</p>
+  </div>
   <p class="small">
     <b>Quest:</b> grip = grab / drop (point and grip to pull things to you) · trigger = shoot · left stick = walk · right stick = turn<br>
     A = jump · B = slow-mo · X = hostile on/off · Y = clear everything · or shoot the buttons on the wall panel<br>
@@ -48,6 +61,6 @@
   </p>
 </div>
 
-<script type="module" src="src/main.js?v=27"></script>
+<script type="module" src="src/main.js?v=28"></script>
 </body>
 </html>
