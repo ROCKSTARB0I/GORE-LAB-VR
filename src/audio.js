@@ -257,6 +257,14 @@ function breath(out, dur, vol, freq) {
   g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
   src.connect(f).connect(g).connect(out); src.start(t); src.stop(t + dur);
 }
+export const audioCtx = () => ctx();
+// keep a live source (a player's voice) placed: same panning and falloff as one-shot sounds
+sfx.place = (pan, gain, pos, vol = 1) => {
+  const dx = pos.x - listener.x, dz = pos.z - listener.z, dist = Math.hypot(dx, dz, pos.y - listener.y);
+  const ang = Math.atan2(dx, -dz) + listener.yaw;
+  pan.pan.value = Math.max(-1, Math.min(1, Math.sin(ang)));
+  gain.gain.value = vol * 1.6 / (1 + dist * 0.3);
+};
 sfx.setListener = (x, y, z, yaw) => { listener.x = x; listener.y = y; listener.z = z; listener.yaw = yaw; };
 sfx.loadVoices = () => { if (ac) loadVoices(); };
 // type: who's speaking (giants and bosses deeper, runners higher); scale: body size

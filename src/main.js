@@ -1,8 +1,9 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=26';
-import { Dummy, faceTex } from './ragdoll.js?v=26';
-import { Gore } from './gore.js?v=26';
-import { sfx, music } from './audio.js?v=26';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=28';
+import { Dummy, faceTex } from './ragdoll.js?v=28';
+import { Gore } from './gore.js?v=28';
+import { sfx, music } from './audio.js?v=28';
+import { net, SHIRTS, host as netHost, join as netJoin, send, sendPose, updateVoices, setMuted } from './net.js?v=28';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -404,11 +405,15 @@ function renderMirror() {
 const flipY = new THREE.Quaternion().setFromAxisAngle(new V3(0, 1, 0), Math.PI);
 const selfHead = new THREE.Mesh(new THREE.SphereGeometry(0.115, 18, 14), new THREE.MeshLambertMaterial({ map: faceTex(0xdcb58f, 0x2a1b10, 'neutral') }));
 selfHead.layers.set(MIRROR_ONLY); scene.add(selfHead);
+const selfMouth = makeMouth(); selfMouth.layers.set(MIRROR_ONLY); selfHead.add(selfMouth);
 const selfNeck = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.06, 1, 14), new THREE.MeshLambertMaterial({ color: 0xdcb58f }));
 selfNeck.layers.set(MIRROR_ONLY); scene.add(selfNeck);
 camera.layers.enable(EYES_ONLY);
-function setMap(key) {
+function setMap(key, fromNet = false) {
   if (!MAPS[key]) key = 'lab';
+  // in a multiplayer game the host picks the map for everyone
+  if (net.on && !net.host && !fromNet) { if (started) banner('HOST PICKS', 'Only the host can change the map', 2); return; }
+  if (net.on && net.host) send({ t: 'map', map: key });
   const def = MAPS[key];
   setHalf(def.half ?? 8);
   sfx.ambience?.(def.amb);
@@ -437,7 +442,9 @@ function fullReset() {
   resetItems(); spawnBarrel(3.5, -5.5);
   spawnDummy(-2, -4.5); spawnDummy(0.5, -5.5); spawnDummy(2.5, -4);
   P.hp = 100;
-  rig.position.set(0, S.height + P.y, 1.5);
+  // in multiplayer everyone starts on their own spot instead of inside each other
+  const slot = net.on ? net.color : 0;
+  rig.position.set(net.on ? (slot % 4 - 1.5) * 1.1 : 0, S.height + P.y, 1.5 + Math.floor(slot / 4) * 1.1);
 }
 function addKill() { S.kills++; saveKills(); drawPanel(); }
 const fmtKills = () => S.kills === Infinity ? '∞' : S.kills;
@@ -570,7 +577,7 @@ function explode(barrel) {
 }
 
 // explosion at c: throws everything within R, tears up dummies, sets off other explosives
-function blast(c, R = 5, rocket = false) {
+function blast(c, R = 5, rocket = false, enemy = false) {
   sfx.boom(); pulseAll(1, 200);
   const mesh = new THREE.Mesh(blastGeo, new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.9, depthWrite: false }));
   mesh.position.copy(c); scene.add(mesh); explosions.push({ mesh, t: 0, size: R / 5 });
@@ -590,6 +597,14 @@ function blast(c, R = 5, rocket = false) {
         }
       } else damagePlayer(70 * f);
     }
+  }
+  // other players caught in it (not by enemies' bombs: they aren't in each other's worlds yet)
+  if (!enemy) for (const rp of remotes.values()) {
+    if (!rp.have || rp.dead) continue;
+    const dx = rp.head.position.x - c.x, dy = rp.head.position.y - 0.8 - c.y, dz = rp.head.position.z - c.z, d = Math.hypot(dx, dy, dz);
+    if (d >= R) continue;
+    const f = 1 - d / R, flat = Math.hypot(dx, dz) || 1;
+    hurtPlayer(rp, rocket ? 10 : 70 * f, tv.set(dx / flat * 5.5 * f, 3 + 6.5 * f, dz / flat * 5.5 * f));
   }
   const h = world.dt;
   for (const p of world.particles) {
@@ -1240,9 +1255,9 @@ function applyHands() {
 }
 
 // Full body: a simple torso, arms and legs under your head, arms reaching to your hands.
-const avatar = (() => {
+function makeBody(shirtHex = 0x3a3f47, skin = skinMat) {
   const g = new THREE.Group(); g.visible = false; scene.add(g);
-  const shirt = new THREE.MeshLambertMaterial({ color: 0x3a3f47 }), pants = new THREE.MeshLambertMaterial({ color: 0x252a36 }), boot = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
+  const shirt = new THREE.MeshLambertMaterial({ color: shirtHex }), pants = new THREE.MeshLambertMaterial({ color: 0x252a36 }), boot = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
   const limb = (r, m) => { const x = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 0.85, 1, 10), m); g.add(x); return x; };
   // a shaped torso: broad, rounded chest tapering to the waist, with shoulders
   const torso = new THREE.Group();
@@ -1255,9 +1270,10 @@ const avatar = (() => {
   const hips = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 12), pants); hips.scale.set(1.5, 0.95, 0.85);   // rounded hips
   g.add(torso, hips);
   const feet = [0, 1].map(() => { const f = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.26), boot); g.add(f); return f; });
-  const wrists = [0, 1].map(() => { const w = new THREE.Mesh(new THREE.SphereGeometry(0.031, 10, 8), skinMat); g.add(w); return w; });
-  return { g, torso, hips, feet, wrists, phase: 0, speed: 0, last: new V3(), arms: [[limb(0.045, shirt), limb(0.033, skinMat)], [limb(0.045, shirt), limb(0.033, skinMat)]], legs: [[limb(0.062, pants), limb(0.05, pants)], [limb(0.062, pants), limb(0.05, pants)]] };
-})();
+  const wrists = [0, 1].map(() => { const w = new THREE.Mesh(new THREE.SphereGeometry(0.031, 10, 8), skin); g.add(w); return w; });
+  return { g, torso, hips, feet, wrists, shirt, phase: 0, speed: 0, last: new V3(), arms: [[limb(0.045, shirt), limb(0.033, skin)], [limb(0.045, shirt), limb(0.033, skin)]], legs: [[limb(0.062, pants), limb(0.05, pants)], [limb(0.062, pants), limb(0.05, pants)]] };
+}
+const avatar = makeBody();
 const av = { a: new V3(), b: new V3(), c: new V3(), e: new V3(), f: new V3(), r: new V3(), u: new V3(0, 1, 0) };
 function placeLimb(m, a, b) {
   m.position.addVectors(a, b).multiplyScalar(0.5);
@@ -1276,19 +1292,22 @@ function updateAvatar() {
   const on = started && SHOP.body && owns('body') && !freecam;
   avatar.g.visible = on;
   if (!on) return;
-  const head = headPos(), yaw = bodyYaw();
+  poseBody(avatar, headPos(), bodyYaw(), side => inVR ? vrHands.find(h => h.active && (h.side === 'left') === (side < 0)) : (side > 0 ? desk : null), P.y, P.onGround);
+}
+// Lay a body out under a head, arms reaching to the hands. hand(side) gives the
+// hand for that side (-1 left, 1 right) as { glove, side }, or null to hang the arm.
+function poseBody(avatar, head, yaw, handFor, floorY, grounded) {
   const fwd = av.f.set(-Math.sin(yaw), 0, -Math.cos(yaw)), right = av.r.set(Math.cos(yaw), 0, -Math.sin(yaw));
   const neck = av.a.copy(head).addScaledVector(UP, -0.29).addScaledVector(fwd, -0.07);
   (avatar.neckBase ??= new V3()).copy(neck).addScaledVector(UP, -0.06);   // a little way down inside the chest
   holQ.setFromAxisAngle(UP, yaw);
   avatar.torso.position.copy(neck).addScaledVector(UP, -0.27); avatar.torso.quaternion.copy(holQ);
   avatar.hips.position.copy(neck).addScaledVector(UP, -0.58); avatar.hips.quaternion.copy(holQ);
-  const floorY = P.y;
   // walking: stride with how fast the head is moving across the floor
   const dt = 1 / 72, moved = Math.hypot(head.x - avatar.last.x, head.z - avatar.last.z);
   avatar.last.copy(head);
   avatar.speed += (Math.min(4, moved / dt) - avatar.speed) * 0.15;
-  const walking = avatar.speed > 0.25 && P.onGround;
+  const walking = avatar.speed > 0.25 && grounded;
   avatar.phase += walking ? moved * 6.5 : 0;
   const stride = walking ? Math.min(0.28, avatar.speed * 0.12) : 0;
   for (let i = 0; i < 2; i++) {
@@ -1301,7 +1320,7 @@ function updateAvatar() {
     avatar.feet[i].position.copy(foot).addScaledVector(fwd, 0.06).setY(floorY + 0.04); avatar.feet[i].quaternion.copy(holQ);
     // arms to the hands (a free arm hangs at your side)
     const sh = av.b.copy(neck).addScaledVector(UP, -0.05).addScaledVector(right, side * 0.165);
-    const hand = inVR ? vrHands.find(h => h.active && (h.side === 'left') === (side < 0)) : (side > 0 ? desk : null);
+    const hand = handFor(side);
     // the forearm runs right into the heel of the hand (the wrist point in the hand's own frame)
     const ws = hand?.side === 'left' ? 1 : -1;
     const H = hand ? av.c.copy(hand.glove.position).add(tv.set(-ws * 0.012, -0.03, 0.125).applyQuaternion(hand.glove.quaternion))
@@ -1322,6 +1341,149 @@ function updateAvatar() {
       placeLimb(fore, elbow, H); wrist.visible = false;
     }
   }
+}
+
+// ------------------------------------------------------------ other players (multiplayer)
+// Each one is a full body under a head with a face: their shirt colour, their
+// name floating overhead, a mouth that opens with their voice, and whatever
+// they're holding. Poses arrive about 20 times a second and are smoothed.
+const remotes = new Map();
+const FACE_SKIN = 0xdcb58f, FACE_HAIR = 0x2a1b10;
+function nameTag(name, hex) {
+  const c = document.createElement('canvas'); c.width = 512; c.height = 128;
+  const g = c.getContext('2d');
+  g.font = 'bold 64px Helvetica, Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  const w = Math.min(500, g.measureText(name).width + 60);
+  g.fillStyle = 'rgba(16,20,26,.78)'; g.beginPath(); g.roundRect(256 - w / 2, 14, w, 100, 24); g.fill();
+  g.fillStyle = '#' + hex.toString(16).padStart(6, '0'); g.fillRect(256 - w / 2 + 18, 98, w - 36, 8);
+  g.fillStyle = '#fff'; g.fillText(name, 256, 60, 470);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false }));
+  s.scale.set(0.56, 0.14, 1);
+  return s;
+}
+function makeMouth() {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.02, 12, 8), new THREE.MeshBasicMaterial({ color: 0x2a0d0a }));
+  m.position.set(0, -0.06, 0.1); m.visible = false;   // over the drawn mouth on the face
+  return m;
+}
+function setMouth(m, level) {
+  m.visible = level > 0.04;
+  m.scale.set(1.15 - level * 0.2, 0.25 + level * 1.5, 0.45);
+}
+function addRemote(info) {
+  if (remotes.has(info.id)) return;
+  const hex = SHIRTS[info.color % SHIRTS.length], skin = skinMat.clone();
+  const body = makeBody(hex, skin);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.115, 18, 14), new THREE.MeshLambertMaterial({ map: faceTex(FACE_SKIN, FACE_HAIR, 'neutral') }));
+  const mouth = makeMouth(); head.add(mouth);
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.06, 1, 14), new THREE.MeshLambertMaterial({ color: FACE_SKIN }));
+  const tag = nameTag(info.name, hex);
+  const hands = ['left', 'right'].map(side => ({ side, glove: buildHand(side, skin, 'default', 0x1c1c1e, true), on: false, kind: '', tool: null }));
+  scene.add(head, neck, tag);
+  for (const h of hands) { h.glove.visible = false; scene.add(h.glove); }
+  remotes.set(info.id, { info, body, head, mouth, neck, tag, hands, have: false, dead: false, hitCd: 0, y: 0, grounded: true, eye: new V3(), look: new THREE.Quaternion() });
+}
+function removeRemote(id) {
+  const rp = remotes.get(id);
+  if (!rp) return;
+  const gone = o => { scene.remove(o); o.traverse(c => { c.geometry?.dispose(); }); };
+  for (const h of rp.hands) { if (h.tool) gone(h.tool); gone(h.glove); }
+  gone(rp.body.g); gone(rp.head); gone(rp.neck); scene.remove(rp.tag); rp.tag.material.map.dispose();
+  remotes.delete(id);
+}
+// what we send: head, both hands, whatever they hold, and how we're doing
+const r3 = x => Math.round(x * 1000) / 1000;
+const poseQ = new THREE.Quaternion(), poseV = new V3();
+function handPose(h) {
+  if (!h || !h.active || !h.glove.visible) return 0;
+  const g = h.glove, t = h.held?.type === 'tool' ? h.held.tool : null;
+  const out = [r3(g.position.x), r3(g.position.y), r3(g.position.z), r3(g.quaternion.x), r3(g.quaternion.y), r3(g.quaternion.z), r3(g.quaternion.w), h.held ? 0.9 : h.trigger ? 0.6 : 0.15];
+  if (t) {
+    t.mesh.getWorldPosition(poseV); t.mesh.getWorldQuaternion(poseQ);
+    out.push(t.kind, r3(poseV.x), r3(poseV.y), r3(poseV.z), r3(poseQ.x), r3(poseQ.y), r3(poseQ.z), r3(poseQ.w));
+  }
+  return out;
+}
+function myPose() {
+  const head = headPos(); camera.getWorldQuaternion(poseQ);
+  const L = inVR ? vrHands.find(h => h.side === 'left') : null, R = inVR ? vrHands.find(h => h.side === 'right') : desk;
+  return { h: [r3(head.x), r3(head.y), r3(head.z), r3(poseQ.x), r3(poseQ.y), r3(poseQ.z), r3(poseQ.w)], y: r3(P.y), g: P.onGround ? 1 : 0,
+    d: P.dead || freecam ? 1 : 0, L: handPose(L), R: handPose(R) };
+}
+const rq = new THREE.Quaternion(), rv = new V3(), rFwd = new V3();
+function updateRemotes(dt) {
+  const k = 1 - Math.exp(-dt * 14);
+  for (const rp of remotes.values()) {
+    rp.hitCd -= dt;
+    const p = rp.info.pose ?? null;
+    const show = !!p && !p.d;
+    rp.body.g.visible = rp.head.visible = rp.neck.visible = rp.tag.visible = show;
+    for (const h of rp.hands) { h.glove.visible = show && h.on; if (h.tool) h.tool.visible = h.glove.visible; }
+    rp.dead = !!p?.d;
+    if (!show) { rp.have = false; continue; }
+    const snap = !rp.have; rp.have = true;
+    const kk = snap ? 1 : k;
+    // p.h is their eyes; the head's centre sits a little below and behind them (as in the mirror)
+    rp.eye.lerp(rv.fromArray(p.h, 0), kk);
+    rp.look.slerp(rq.fromArray(p.h, 3), kk);
+    rp.head.position.set(0, -0.11, 0.085).applyQuaternion(rp.look).add(rp.eye);
+    rp.head.quaternion.copy(rp.look).multiply(flipY);
+    rp.y += (p.y - rp.y) * kk; rp.grounded = !!p.g;
+    setMouth(rp.mouth, rp.info.level ?? 0);
+    rp.tag.position.copy(rp.head.position).y += 0.27;
+    [p.L, p.R].forEach((hp, i) => {
+      const h = rp.hands[i];
+      h.on = !!hp;
+      if (!hp) { h.glove.visible = false; return; }
+      h.glove.visible = true;
+      const fresh = snap || !h.was;
+      h.glove.position.lerp(rv.fromArray(hp, 0), fresh ? 1 : k);
+      h.glove.quaternion.slerp(rq.fromArray(hp, 3), fresh ? 1 : k);
+      h.glove.userData.pose(hp[7], hp[7], 0.3);
+      const kind = hp.length > 8 ? hp[8] : '';
+      if (kind !== h.kind) {
+        if (h.tool) { scene.remove(h.tool); h.tool = null; }
+        h.kind = kind;
+        if (GUNS[kind]) { h.tool = buildToolMesh(kind); scene.add(h.tool); }
+      }
+      if (h.tool) {
+        h.tool.position.lerp(rv.fromArray(hp, 9), fresh ? 1 : k);
+        h.tool.quaternion.slerp(rq.fromArray(hp, 12), fresh ? 1 : k);
+        h.tool.visible = true;
+      }
+    });
+    for (const h of rp.hands) h.was = h.on;
+    // the body hangs under the head, facing where they look
+    rFwd.set(0, 0, -1).applyQuaternion(rq.fromArray(p.h, 3));
+    poseBody(rp.body, rp.eye, Math.atan2(-rFwd.x, -rFwd.z), side => rp.hands[side < 0 ? 0 : 1].on ? rp.hands[side < 0 ? 0 : 1] : null, rp.y, rp.grounded);
+    rp.body.g.visible = true;
+    placeLimb(rp.neck, rp.body.neckBase, rp.head.position);
+  }
+}
+// where a ray (a..b) first meets another player: head, body, or legs
+const rpA = new V3(), rpB = new V3();
+function rayPlayer(rp, a, b) {
+  if (!rp.have || rp.dead) return null;
+  let best = null;
+  const tryCap = (p, q, r, part) => { const d2 = segSeg(a, b, p, q); if (d2 < r * r && (!best || segSeg.s < best.s)) best = { s: segSeg.s, part }; };
+  tryCap(rp.head.position, rp.head.position, 0.13, 'head');
+  tryCap(rp.body.neckBase, rp.body.hips.position, 0.2, 'body');
+  tryCap(rp.body.hips.position, rpA.copy(rp.body.hips.position).setY(rp.y + 0.1), 0.15, 'legs');
+  return best;
+}
+// how close a point is to a player, and to which part
+function nearPlayer(rp, p) {
+  if (!rp.have || rp.dead) return null;
+  const dh = p.distanceTo(rp.head.position);
+  if (dh < 0.17) return 'head';
+  if (segSeg(p, p, rp.body.neckBase, rp.body.hips.position) < 0.24 * 0.24) return 'body';
+  return null;
+}
+// friendly fire: tell them how much it hurt (and which way to throw them)
+function hurtPlayer(rp, n, knock = null) {
+  if (!net.on || rp.dead || n <= 0) return;
+  send({ t: 'dmg', to: rp.info.id, n: Math.round(n * 10) / 10, by: net.name, k: knock ? [r3(knock.x), r3(knock.y), r3(knock.z)] : 0 });
 }
 
 function pulse(h, intensity, ms) { h.src?.gamepad?.hapticActuators?.[0]?.pulse?.(intensity, ms); }
@@ -1650,6 +1812,7 @@ function hitscan(o, d) {
   for (const b of barrels) if (segSeg(o, rayEnd, b.a.pos, b.b.pos) < 0.28 * 0.28) take(segSeg.s * L - 0.2, 'barrel', { barrel: b });
   for (const b of balls) if (segSeg(o, rayEnd, b.p.pos, b.p.pos) < 0.14 * 0.14) take(segSeg.s * L, 'ball', { ball: b });
   for (const g of grenades) if (segSeg(o, rayEnd, g.p.pos, g.p.pos) < 0.09 * 0.09) take(segSeg.s * L, 'grenade', { grenade: g });
+  for (const rp of remotes.values()) { const r = rayPlayer(rp, o, rayEnd); if (r) take(r.s * L, 'player', { player: rp, part: r.part }); }
   return best;
 }
 
@@ -1669,6 +1832,7 @@ function fire(h, t) {
     return;
   }
   sfx.shot(def.sound); pulse(h, def.kick > 0.4 ? 1 : 0.6, def.kick > 0.4 ? 120 : 50);
+  if (net.on && (def.rocket || def.launcher || def.bolt)) send({ t: 'fx', k: 'shot', s: def.sound ?? '', a: [r3(fromV.x), r3(fromV.y), r3(fromV.z)], e: [] });
   if (def.rocket) { spawnRocket(fromV, dirV); return; }
   if (def.launcher) {
     // lobbed grenade: bursts on a body, otherwise on a short fuse
@@ -1677,7 +1841,7 @@ function fire(h, t) {
     g.fuse = 1.6; g.impact = true; return;
   }
   if (def.bolt) { spawnBolt(fromV, dirV); return; }
-  const hitsPer = new Map(), clusters = new Map();
+  const hitsPer = new Map(), clusters = new Map(), ffire = new Map(), ends = [];
   for (let i = 0; i < def.pellets; i++) {
     const sp = def.spread * steady;
     dirV.copy(NEG_Z).applyQuaternion(t.aimQ);
@@ -1686,6 +1850,7 @@ function fire(h, t) {
     let r = hitscan(o, dirV);
     hitPt.copy(o).addScaledVector(dirV, r.t);
     tracer(fromV, hitPt);
+    if (net.on) ends.push(r3(hitPt.x), r3(hitPt.y), r3(hitPt.z));
     // a sniper round keeps going through the first two bodies
     if (def.pierce) for (let k = 0; k < 2 && r.kind === 'dummy'; k++) {
       const d = r.dummy;
@@ -1719,12 +1884,19 @@ function fire(h, t) {
       d.hit(r.bone, def.dmg, tv.copy(dirV).multiplyScalar(def.push), hitPt, { bullet: true, big: !!def.gib, dir: dirV });
       hitsPer.set(d, (hitsPer.get(d) || 0) + 1);
     } else if (r.kind === 'wall') gore.sparks(hitPt, 3);
+    else if (r.kind === 'player') {
+      // friendly fire: same damage a dummy would take, double on the head
+      gore.spray(hitPt, dirV, 9, 6, 0.35);
+      ffire.set(r.player, (ffire.get(r.player) || 0) + def.dmg * 14 * (r.part === 'head' ? 2 : r.part === 'legs' ? 0.7 : 1));
+    }
     else if (r.kind === 'panel') press(r.index);
     else if (r.kind === 'barrel') { gore.sparks(hitPt, 6); if (--r.barrel.hp <= 0) explode(r.barrel); }
     else if (r.kind === 'grenade') r.grenade.fuse = 0.02;
     else if (r.kind === 'ball') r.ball.p.push(tv.copy(dirV).multiplyScalar(6), world.dt);
   }
   for (const c of clusters.values()) c.d.addWound(c.bone, c.pt.multiplyScalar(1 / c.n), c.dir, 'bullet', true, c.n);
+  for (const [rp, n] of ffire) { hurtPlayer(rp, n, tv.copy(dirV).multiplyScalar(def.push * 0.3)); sfx.squish(); }
+  if (net.on) send({ t: 'fx', k: 'shot', s: def.sound ?? '', a: [r3(fromV.x), r3(fromV.y), r3(fromV.z)], e: ends });
   if (hitsPer.size) sfx.squish();
   for (const [d, n] of hitsPer) if (n >= 4 || def.dmg >= 3) d.knockdown(2.5 + Math.random());
 }
@@ -1742,6 +1914,18 @@ function melee(h, t, dt) {
   const speed = tipVel.length();
   bladeDir.subVectors(t.b.pos, t.a.pos).normalize();
   const thrust = tipVel.dot(bladeDir);
+  if (speed > 2.8 && speed < 80) for (const rp of remotes.values()) {
+    if (rp.hitCd > 0 || !rp.have || rp.dead) continue;
+    let part = null;
+    if (segSeg(bladeA, h.tip, rp.head.position, rp.head.position) < 0.15 * 0.15) part = 'head';
+    else if (segSeg(bladeA, h.tip, rp.body.neckBase, rp.body.hips.position) < 0.22 * 0.22) part = 'body';
+    if (!part) continue;
+    rp.hitCd = 0.4;
+    const n = Math.min(70, (def.blunt ? 16 + def.dmg * 2 : 22 + def.dmg * 3) * (part === 'head' ? 1.5 : 1));
+    hurtPlayer(rp, n, tv.copy(tipVel).normalize().multiplyScalar(def.blunt ? 2.5 : 1));
+    gore.spray(h.tip, tv2.copy(tipVel).normalize(), def.blunt ? 5 : 12, 3, 0.6);
+    sfx.grunt(); def.blunt ? sfx.thud() : sfx.squish(); bloody(h, 0.15); pulse(h, 1, 70);
+  }
   if (speed > 1.4 && speed < 80) {
     for (const d of dummies) {
       let hit = null, torso = false;
@@ -1946,6 +2130,13 @@ function pushHands() {
   for (const h of hands()) {
     if (!h.active || h.held) continue;
     const speed = h.vel.length();
+    if (speed > 2.2 && h.punchCd <= 0) for (const rp of remotes.values()) {
+      const part = rp.hitCd > 0 ? null : nearPlayer(rp, h.pos);
+      if (!part) continue;
+      h.punchCd = 0.3; rp.hitCd = 0.3;
+      hurtPlayer(rp, speed * (part === 'head' ? 3 : 2), tv.copy(h.vel).multiplyScalar(0.4));
+      sfx.thud(); pulse(h, 1, 70);
+    }
     if (h.held) continue;
     for (const p of world.particles) {
       if (p.pinned) continue;
@@ -2157,8 +2348,8 @@ function updateSurvival(sdt) {
 
 // ------------------------------------------------------------ main menu (floating panel, pauses the game)
 let paused = false, played = false;
-const UI = { w: 1.7, h: 1.5, hover: -1, side: 0, follow: 0, head: 150, rowH: 67, help: -1, shop: false, cheat: false, gore: false };
-UI.canvas = document.createElement('canvas'); UI.canvas.width = 1024; UI.canvas.height = 900;
+const UI = { w: 1.7, h: 1.617, hover: -1, side: 0, follow: 0, head: 150, rowH: 67, help: -1, shop: false, cheat: false, gore: false };
+UI.canvas = document.createElement('canvas'); UI.canvas.width = 1024; UI.canvas.height = 970;
 UI.tex = new THREE.CanvasTexture(UI.canvas); UI.tex.colorSpace = THREE.SRGBColorSpace;
 UI.mesh = new THREE.Mesh(new THREE.PlaneGeometry(UI.w, UI.h), new THREE.MeshBasicMaterial({ map: UI.tex }));
 UI.mesh.visible = false; scene.add(UI.mesh);
@@ -2176,6 +2367,8 @@ const UI_ROWS = [
   { label: () => 'SHOP', act: () => { UI.shop = true; } },
   { label: () => 'GET A SPAWN GUN', act: () => giveSpawnGun() },
   { label: () => 'DO NOT CLICK', act: () => { UI.cheat = true; } },
+  { label: () => net.on ? 'ROOM ' + net.code + ' · ' + (net.players.size + 1) + ' PLAYING · MIC ' + (!net.micOk ? 'NONE' : net.muted ? 'OFF' : 'ON') : 'MULTIPLAYER: HOST OR JOIN ON THE START SCREEN',
+    act: () => { if (net.on && net.micOk) setMuted(!net.muted); else sfx.beep(); } },
 ];
 // ---- gore level: four presets, or tune each part by hand (that makes it Custom)
 const GORE_PRESETS = {
@@ -2292,7 +2485,7 @@ const HELP_ROWS = [
 const uiRows = () => UI.gore ? GORE_ROWS : UI.cheat ? CHEAT_ROWS : UI.shop ? SHOP_ROWS : UI.help >= 0 ? HELP_ROWS : UI_ROWS;
 function drawMainMenu() {
   if (!UI.mesh.visible) return;
-  const g = UI.canvas.getContext('2d'), W = 1024, H = 900;
+  const g = UI.canvas.getContext('2d'), W = 1024, H = 970;
   g.fillStyle = '#14171c'; g.fillRect(0, 0, W, H);
   g.fillStyle = '#e8792b'; g.textAlign = 'center'; g.textBaseline = 'middle';
   g.font = 'bold 92px Helvetica, Arial, sans-serif'; g.fillText(UI.gore ? 'GORE' : UI.cheat ? 'CHEATS' : UI.shop ? 'SHOP' : 'GORE LAB', W / 2, 62);
@@ -2349,7 +2542,7 @@ function menuPoint(o, d) {
   const t = -uiO.z / uiD.z, x = uiO.x + uiD.x * t, y = uiO.y + uiD.y * t;
   const u = x / UI.w + 0.5, v = 0.5 - y / UI.h;
   if (t < 0 || u < 0 || u > 1 || v < 0 || v > 1) return null;
-  const row = Math.floor((v * 900 - UI.head) / UI.rowH);
+  const row = Math.floor((v * 970 - UI.head) / UI.rowH);
   uiPt.copy(o).addScaledVector(d, t - 0.01);
   return { row: row >= 0 && row < uiRows().length && uiRows()[row] ? row : -1, side: u < 0.5 ? -1 : 1, point: uiPt };
 }
@@ -2454,6 +2647,11 @@ function updateBolts(sdt) {
     const r = hitscan(b.pos, tv2);
     if (r.t <= step) {
       hitPt.copy(b.pos).addScaledVector(tv2, r.t);
+      if (r.kind === 'player') {
+        hurtPlayer(r.player, r.part === 'head' ? 80 : 45, tv.copy(tv2).multiplyScalar(1.5));
+        gore.spray(hitPt, tv2, 10, 3, 0.5); sfx.squish();
+        b.mesh.removeFromParent(); bolts.splice(i, 1); continue;
+      }
       b.stuck = true; b.life = 20;
       if (r.kind === 'dummy') {
         const d = r.dummy, part = r.bone ? (r.bone.name === 'head' ? d.headMesh : r.bone.mesh) : d.torsoMesh;
@@ -2578,7 +2776,7 @@ function updateEnemies(sdt) {
       if (d.bombT !== undefined) {
         const before = d.bombT; d.bombT -= sdt;
         if (Math.floor(before * 8) !== Math.floor(d.bombT * 8)) sfx.tick();
-        if (d.bombT <= 0) { d.bombDone = true; blast(d.p.chest.pos.clone(), 5); }
+        if (d.bombT <= 0) { d.bombDone = true; blast(d.p.chest.pos.clone(), 5, false, true); }
       }
     }
   }
@@ -2691,6 +2889,7 @@ addEventListener('keydown', e => {
   const map = paused ? {} : { Digit1: 0, Digit2: 2, Digit5: 1, KeyC: 3, KeyH: 4, KeyT: 5, KeyG: 6, KeyR: 7, KeyV: 8, KeyI: 9 };
   if (e.code in map) { panelCd = 0; press(map[e.code]); }
   if (e.code === 'KeyM') { paused ? closeMenu() : openMenu(); return; }
+  if (e.code === 'KeyN' && net.on && net.micOk) { setMuted(!net.muted); banner(net.muted ? 'MIC OFF' : 'MIC ON', '', 1.2); drawMainMenu(); }
   if (paused) return;
   if (e.code === 'KeyE') desk.held ? drop(desk) : grab(desk);
   if (e.code === 'KeyB') holsterKey();
@@ -2742,10 +2941,60 @@ function begin() {
   started = true;
   sfx.init();
   $('screen').hidden = true;
-  setMap(S.map);
+  setMap(S.map, true);
   music.play(S.track);
   openMenu();
 }
+// ------------------------------------------------------------ multiplayer lobby + messages
+net.getMap = () => S.map;
+net.onMap = key => { if (started) setMap(key, true); else S.map = key; };
+net.onPlayers = (kind, info) => {
+  if (kind === 'join') { addRemote(info); if (started) banner('JOINED', info.name, 2); }
+  else { removeRemote(info.id); if (started) banner('LEFT', info.name, 2); }
+  drawMainMenu();
+};
+net.onStatus = st => {
+  $('mpStatus').textContent = st;
+  if (started && !net.on) { for (const id of [...remotes.keys()]) removeRemote(id); banner('DISCONNECTED', st, 3); drawMainMenu(); }
+};
+net.onDmg = m => {
+  if (P.dead) return;
+  damagePlayer(m.n);
+  if (m.k && !P.dead && !freecam && !S.god) { P.vx += m.k[0]; P.vz += m.k[2]; if (m.k[1] > 0) { P.vy = Math.max(P.vy, 0) + m.k[1]; P.onGround = false; } }
+  if (P.dead) {
+    send({ t: 'kill', killer: m.by, victim: net.name });
+    banner('KILLED BY', m.by, 3);
+  }
+};
+net.onKill = m => {
+  if (m.killer === net.name) { addKill(); banner('KILL!', 'You killed ' + m.victim, 2.2); }
+  else banner('R.I.P.', m.killer + ' killed ' + m.victim, 2.2);
+};
+net.onFx = m => {
+  if (m.k !== 'shot' || !started) return;
+  sfx.shot(m.s || undefined);
+  const a = tv.fromArray(m.a);
+  for (let i = 0; i + 2 < m.e.length; i += 3) tracer(a, tv2.fromArray(m.e, i));
+};
+try { $('mpName').value = localStorage.getItem('goreLabName') || ''; } catch { /* private mode */ }
+async function mpStart(hosting) {
+  const name = $('mpName').value.trim().slice(0, 16);
+  if (!name) { $('mpStatus').textContent = 'Type a username first.'; $('mpName').focus(); return; }
+  try { localStorage.setItem('goreLabName', name); } catch { /* private mode */ }
+  for (const id of ['mpHost', 'mpJoin', 'mpName', 'mpCode']) $(id).disabled = true;
+  try {
+    if (hosting) await netHost(name); else await netJoin(name, $('mpCode').value);
+    $('mpStatus').textContent = (hosting ? 'Hosting! Your room code is ' + net.code + '. Tell your friends, then' : 'Joined room ' + net.code + '! Now') + ' press Enter VR or Play on desktop.';
+    if (hosting) { $('mpCode').value = net.code; }
+    $('mpCodeBig').textContent = net.code; $('mpCodeBig').hidden = false;
+  } catch (e) {
+    $('mpStatus').textContent = 'Could not ' + (hosting ? 'host' : 'join') + ': ' + (e.message || e.type || e);
+    for (const id of ['mpHost', 'mpJoin', 'mpName', 'mpCode']) $(id).disabled = false;
+  }
+}
+$('mpHost').addEventListener('click', () => mpStart(true));
+$('mpJoin').addEventListener('click', () => mpStart(false));
+$('mpCode').addEventListener('keydown', e => { if (e.key === 'Enter') mpStart(false); });
 $('playDesktop').addEventListener('click', () => { begin(); $('hud').hidden = false; });
 $('enterVR').addEventListener('click', async () => {
   try {
@@ -2798,6 +3047,13 @@ function frame(time) {
     spawnDotOn = false; sawLevel = 0; sawCutting = false; flameOn = false;
     for (const h of hands()) updateHand(h, dt);
     updateAvatar();
+    if (net.on) {
+      sendPose(myPose(), time / 1000);
+      updateRemotes(dt);
+      updateVoices(dt, id => remotes.get(id)?.have ? remotes.get(id).head.position : null);
+      avatar.shirt.color.setHex(SHIRTS[net.color % SHIRTS.length]);
+    }
+    setMouth(selfMouth, net.selfLevel);
     sfx.saw(sawLevel, sawCutting);
     sfx.flame(flameOn && !paused);
     spawnDot.visible = spawnDotOn;
@@ -2861,5 +3117,5 @@ function frame(time) {
 renderer.setAnimationLoop(frame);
 
 // for poking at things from the console
-window.lab = { get mirror() { return mirror; }, renderer, step(ms = 16.7, n = 1) { for (let i = 0; i < n; i++) frame(last + ms); }, snap() { frame(last + 16.7); return renderer.domElement.toDataURL('image/jpeg', 0.6); }, makeTool, setGore, bolts, holsters, jump, HELP, UI, UI_ROWS, MAPS, setMap, setTrack, setHeight, openMenu, closeMenu, menuActivate, music, get paused() { return paused; }, P, SV, damagePlayer, startSurvival, world, dummies, tools, barrels, balls, grenades, mines, rockets, menu, menuMove, S, gore, desk, rig, camera, press, grab, drop, spawnDummy, spawnBarrel,
+window.lab = { net, remotes, myPose, updateRemotes, fire, hitscan, hurtPlayer, get mirror() { return mirror; }, renderer, step(ms = 16.7, n = 1) { for (let i = 0; i < n; i++) frame(last + ms); }, snap() { frame(last + 16.7); return renderer.domElement.toDataURL('image/jpeg', 0.6); }, makeTool, setGore, bolts, holsters, jump, HELP, UI, UI_ROWS, MAPS, setMap, setTrack, setHeight, openMenu, closeMenu, menuActivate, music, get paused() { return paused; }, P, SV, damagePlayer, startSurvival, world, dummies, tools, barrels, balls, grenades, mines, rockets, menu, menuMove, S, gore, desk, rig, camera, press, grab, drop, spawnDummy, spawnBarrel,
   look(y, p) { yaw = y; pitch = p; }, get state() { return { started, inVR, freecam, locked, noLock }; } };
