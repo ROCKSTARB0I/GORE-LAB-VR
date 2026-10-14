@@ -2,7 +2,7 @@
 // walking pose while alive ("active ragdoll"), goes limp when dead, and can
 // lose its head and limbs.
 import * as THREE from '../vendor/three.module.js';
-import { Particle, HALF, segSeg } from './physics.js?v=15';
+import { Particle, HALF, segSeg } from './physics.js?v=16';
 
 // rest pose, facing +Z
 const REST = {
@@ -499,7 +499,8 @@ export class Dummy {
       }
       return;
     }
-    const dx = player.x - P.pelvis.pos.x, dz = player.z - P.pelvis.pos.z, dist = Math.hypot(dx, dz) || 1;
+    const gx = this.goal ? this.goal.x : player.x, gz = this.goal ? this.goal.z : player.z;
+    const dx = gx - P.pelvis.pos.x, dz = gz - P.pelvis.pos.z, dist = Math.hypot(dx, dz) || 1;
     if (this.state === 'crawl') {
       if (hostile && dist > 0.6) {
         t1.set(dx / dist * 7 * h, 0, dz / dist * 7 * h);
@@ -512,6 +513,7 @@ export class Dummy {
     this.rise = Math.min(1, this.rise + h * 0.9);
     let speed = 0, want = this.yaw;
     if (this.panic) { if (Math.random() < h * 2) this.wanderYaw = Math.random() * 6.28; want = this.wanderYaw; speed = 2.0; }
+    else if (this.goal) { want = Math.atan2(dx, dz); speed = dist > 0.35 ? 1.3 * this.speed : 0; }
     else if (hostile) { want = Math.atan2(dx, dz); speed = dist > (this.gunner ? 5 : 0.95 * this.s) ? 1.15 * this.speed : 0; }
     else {
       this.wanderT -= h;
@@ -579,7 +581,7 @@ export class Dummy {
   hit(part, dmg, dv, point, opts = {}) {
     const h = this.world.dt, P = this.p;
     this.stun = Math.min(1.5, this.stun + 0.5 * dmg);
-    this.hurtT = 1.1;
+    this.hurtT = 1.1; this.aggro = true;
     if (!part) {
       for (const k of ['chest', 'pelvis', 'neck']) P[k].push(dv, h * 0.6);
       this.tint(this.torsoMesh);
@@ -601,7 +603,7 @@ export class Dummy {
   // a blade pushed in: big damage, no dismemberment
   stab(part, dv) {
     const h = this.world.dt, P = this.p;
-    this.stun = 1.5; this.hurtT = 1.4;
+    this.stun = 1.5; this.hurtT = 1.4; this.aggro = true;
     if (!part) { for (const k of ['chest', 'pelvis']) P[k].push(dv, h); this.tint(this.torsoMesh); this.hp -= 45; }
     else { part.a.push(dv, h); part.b.push(dv, h); this.tint(part.mesh ?? this.headMesh); this.hp -= part.name === 'head' ? 400 : 12; }
     this.bleeding += 0.5;

@@ -1,8 +1,8 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=15';
-import { Dummy } from './ragdoll.js?v=15';
-import { Gore } from './gore.js?v=15';
-import { sfx, music } from './audio.js?v=15';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=16';
+import { Dummy } from './ragdoll.js?v=16';
+import { Gore } from './gore.js?v=16';
+import { sfx, music } from './audio.js?v=16';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -396,7 +396,7 @@ function syncItems() {
     it.mesh.quaternion.setFromUnitVectors(NEG_Z, tv);
   }
 }
-function disposeDummy(d) { if (d.item) scene.remove(d.item.mesh); d.dispose(); }
+function disposeDummy(d) { dropWeapon(d); if (d.item) scene.remove(d.item.mesh); d.dispose(); }
 function spawnDummy(x, z, type = 'dummy') {
   if (dummies.length >= MAX_DUMMIES) {
     const i = Math.max(0, dummies.findIndex(d => !d.alive));
@@ -758,7 +758,7 @@ function makeTool(kind, x, y, z) {
   world.add(t.a); world.add(t.b); world.stick(t.a, t.b, { len: def.len, body: t });
   // Solid against bodies, except while stuck in one, holstered, or a blade in the hand
   // (blades have to be able to cut). A gun in the hand shoves bodies but isn't shoved back.
-  world.rods.push({ a: t.a, b: t.b, r: 0.03, body: t, skip: () => !!(t.stuck || t.holster || (t.held && def.melee)) });
+  world.rods.push({ a: t.a, b: t.b, r: 0.03, body: t, skip: () => !!(t.stuck || t.holster || t.npc || (t.held && def.melee)) });
   if (def.muzzle) {
     t.muzzle = new THREE.Object3D(); t.muzzle.position.fromArray(def.muzzle); t.mesh.add(t.muzzle);
     t.flash = new THREE.Mesh(new THREE.SphereGeometry(kind === 'shotgun' || kind === 'rocket' ? 0.07 : 0.045, 8, 6), def.spawner ? M.cyan : M.flash);
@@ -769,6 +769,7 @@ function makeTool(kind, x, y, z) {
   return t;
 }
 function removeTool(t) {
+  if (t.npc) { t.npc.weapon = null; t.npc = null; }
   if (t.held) { t.held.held = null; t.held = null; }
   if (t.support) { t.support.held = null; t.support = null; }
   if (t.holster) { t.holster.tool = null; t.holster = null; }
@@ -1260,6 +1261,7 @@ function grab(h) {
       d.bleeding += 0.5; d.sliceCd = 0.4; t.stuck = null;
       sfx.squish(); bloody(h, 0.2);
     }
+    if (t.npc) { const d = t.npc; d.weapon = null; t.npc = null; d.gunner = !!d.item && d.item.kind === 'gun'; }   // disarmed
     t.held = h; t.a.pinned = t.b.pinned = true; h.hasTip = false;
   }
   else {
@@ -1833,7 +1835,7 @@ function pushHands() {
       if (isDummy && speed > 2.2 && h.punchCd <= 0) {
         const dm = p.body, head = p.name === 'head';
         h.punchCd = 0.25;
-        dm.hp -= speed * (head ? 7 : 3.5); dm.stun = 1.2;
+        dm.hp -= speed * (head ? 7 : 3.5); dm.stun = 1.2; dm.aggro = true;
         if (head) dm.bruise = Math.min(3, dm.bruise + 0.34);   // three good punches per stage of bruising
         if (speed > 4.2) dm.knockdown(2 + Math.random());
         if (speed > 3.2) { gore.spray(p.pos, tv.copy(h.vel).normalize(), head ? 10 : 4, 3, 0.7); bloody(h, 0.2); }
@@ -1937,10 +1939,11 @@ function updatePlayer(dt) {
     const head = headPos(), sdt = dt * world.scale;
     for (const d of dummies) {
       if (!d.alive || !(S.hostile || d.aggro)) continue;
-      const reach = d.state === 'stand' ? 1.25 : d.state === 'crawl' ? 0.85 : 0;
+      const wpn = d.weapon && GUNS[d.weapon.kind].melee ? d.weapon : null;
+      const reach = d.state === 'stand' ? 1.25 + (wpn ? wpn.def.len * 0.5 : 0) : d.state === 'crawl' ? 0.85 : 0;
       if (reach && d.stun < 0.4 && Math.hypot(d.p.chest.pos.x - head.x, d.p.chest.pos.z - head.z) < reach) {
         d.atkT = (d.atkT ?? 0.6) - sdt;
-        if (d.atkT <= 0) { d.atkT = 0.9; damagePlayer(d.state === 'crawl' ? 5 : d.dmg ?? 10); Dummy.say(d, 'attack'); }
+        if (d.atkT <= 0) { d.atkT = 0.9; damagePlayer(d.state === 'crawl' ? 5 : wpn ? MELEE_HIT[wpn.kind] ?? 15 : d.dmg ?? 10); Dummy.say(d, 'attack'); if (wpn?.kind === 'chainsaw') sfx.slice(); else if (wpn) sfx.thud(); }
       } else d.atkT = 0.6;
     }
   }
@@ -2134,6 +2137,8 @@ const HELP = [
     'Hostile dummies and zombies hit you at arm\'s reach.',
     'Explosions hurt you too, including your own.',
     'Survival: zombies come in waves. Each wave heals you a bit.',
+    'Hurt anyone and they come for you. Hostiles grab dropped weapons.',
+    'Grab the weapon out of an enemy\'s hand to disarm them.',
     'B: slow-mo.   X: hostile on / off.   Y: clear everything.',
   ]],
 ];
@@ -2333,9 +2338,89 @@ function updateBolts(sdt) {
 }
 
 // ------------------------------------------------------------ enemy behaviour
+// Hostile enemies pick up weapons left lying about and use them on you.
+const MELEE_HIT = { knife: 14, machete: 20, katana: 26, bat: 16, chainsaw: 32, axe: 26, sledge: 30 };
+const onTable = t => t.a.pos.x > TABLE.min.x - 0.1 && t.a.pos.x < TABLE.max.x + 0.1 && t.a.pos.z > TABLE.min.z - 0.1 && t.a.pos.z < TABLE.max.z + 0.1 && t.a.pos.y > 0.7;
+function freeTool(t) { return !t.held && !t.stuck && !t.holster && !t.embed && !t.npc && t.kind !== 'spawngun' && !onTable(t); }
+function dropWeapon(d) {
+  const t = d.weapon;
+  if (!t) return;
+  d.weapon = null; t.npc = null; t.claim = null;
+  t.a.pinned = t.b.pinned = false;
+  d.gunner = !!d.item && d.item.kind === 'gun';
+}
+// a weapon in an enemy's hand follows the hand; guns point at you
+function holdWeapon(d, head) {
+  const t = d.weapon, hand = d.p.rHand;
+  if (!d.alive || d.gone || d.bone.rForearm.severed || d.bone.rUpperArm.severed || d.heldBy) { dropWeapon(d); return; }
+  if (t.def.melee) tv.subVectors(hand.pos, d.bone.rForearm.a.pos).normalize().lerp(UP, 0.5).normalize();
+  else tv.subVectors(head, hand.pos).normalize();
+  t.mesh.quaternion.setFromUnitVectors(NEG_Z, tv);
+  t.mesh.position.copy(hand.pos);
+  t.a.pos.copy(hand.pos); t.b.pos.copy(hand.pos).addScaledVector(tv, t.def.len);
+  t.a.prev.copy(t.a.pos); t.b.prev.copy(t.b.pos);
+}
+// an armed enemy firing at you
+function enemyFire(d, head) {
+  const t = d.weapon, def = t.def;
+  t.mesh.updateMatrixWorld(true);
+  const from = t.muzzle ? t.muzzle.getWorldPosition(tv2) : tv2.copy(t.b.pos);
+  t.flashT = 0.05; if (t.flash) t.flash.visible = true;
+  sfx.shot(def.sound);
+  dirV.subVectors(head, from).normalize();
+  if (def.rocket) { spawnRocket(from, dirV); return; }
+  if (def.launcher) { const g = spawnGrenade(from.x, from.y, from.z); g.p.setVelocity(tv.copy(dirV).multiplyScalar(11).add(tv3.set(0, 2.5, 0)), world.dt); g.fuse = 1.8; g.impact = true; return; }
+  if (def.bolt) { spawnBolt(from, tv.copy(dirV).add(tv3.set((Math.random() - 0.5) * 0.08, 0.02, (Math.random() - 0.5) * 0.08)).normalize()); if (Math.random() < 0.35) damagePlayer(25); return; }
+  let dmg = 0;
+  for (let i = 0; i < (def.pellets ?? 1); i++) {
+    const to = tv3.copy(head).add(tv.set((Math.random() - 0.5) * 0.6, (Math.random() - 0.5) * 0.5, (Math.random() - 0.5) * 0.6));
+    tracer(from, to);
+    if (Math.random() < 0.35) dmg += Math.min(20, 7 * (def.dmg ?? 1));
+  }
+  if (dmg) { damagePlayer(dmg); if (Math.random() < 0.4) Dummy.say(d, 'taunt'); }
+}
+function updateArmed(d, sdt, head, dist) {
+  if (d.weapon) {
+    holdWeapon(d, head);
+    const t = d.weapon;
+    if (!t || t.def.melee || !d.alive || d.state !== 'stand' || dist > 18 || dist < 1) return;
+    if (t.flashT > 0 && (t.flashT -= sdt) <= 0 && t.flash) t.flash.visible = false;
+    if ((d.wShootT = (d.wShootT ?? 1.5) - sdt) <= 0) {
+      const def = t.def;
+      d.wShootT = def.rocket || def.launcher ? 4 + Math.random() * 2 : def.auto ? 0.5 + Math.random() * 0.4 : Math.max(def.cool ?? 1, 1.1) + Math.random() * 1.2;
+      enemyFire(d, head);
+    }
+    return;
+  }
+  // unarmed and hostile: go and get the nearest weapon lying around
+  if (!d.alive || d.state !== 'stand' || d.heldBy || d.item || !(S.hostile || d.aggro)) { if (d.goal) { d.goal = null; if (d.seek) d.seek.claim = null; d.seek = null; } return; }
+  if (d.seek && (!freeTool(d.seek) || d.seek.claim !== d)) { d.seek = null; d.goal = null; }
+  if (!d.seek && (d.seekT = (d.seekT ?? 0) - sdt) <= 0) {
+    d.seekT = 0.6;
+    let best = null, bd = 6;
+    for (const t of tools) {
+      if (!freeTool(t) || (t.claim && t.claim !== d)) continue;
+      const dd = Math.hypot(t.a.pos.x - d.p.pelvis.pos.x, t.a.pos.z - d.p.pelvis.pos.z);
+      if (dd < bd) { bd = dd; best = t; }
+    }
+    if (best) { d.seek = best; best.claim = d; }
+  }
+  if (d.seek) {
+    const t = d.seek;
+    d.goal = { x: t.a.pos.x, z: t.a.pos.z };
+    if (Math.hypot(t.a.pos.x - d.p.pelvis.pos.x, t.a.pos.z - d.p.pelvis.pos.z) < 0.6 * d.s) {
+      // picked it up
+      d.goal = null; d.seek = null;
+      d.weapon = t; t.npc = d; t.claim = null; t.a.pinned = t.b.pinned = true;
+      d.gunner = !t.def.melee; d.wShootT = 1.2;
+      Dummy.say(d, 'attack');
+    }
+  }
+}
 function updateEnemies(sdt) {
   const head = headPos();
   for (const d of [...dummies]) {
+    updateArmed(d, sdt, head, Math.hypot(d.p.chest.pos.x - head.x, d.p.chest.pos.z - head.z));
     const dist = Math.hypot(d.p.chest.pos.x - head.x, d.p.chest.pos.z - head.z);
     if (d.gunner && d.item && d.alive && d.state === 'stand' && !d.heldBy && (S.hostile || d.aggro) && dist < 16 && dist > 1.2) {
       if ((d.shootT -= sdt) <= 0) {
@@ -2599,6 +2684,7 @@ function frame(time) {
     for (const t of tools) {
       if (t.flashT > 0 && (t.flashT -= dt) <= 0) t.flash.visible = false;
       if (t.stuck) { updateStuck(t); continue; }
+      if (t.npc) continue;
       if (t.holster) { updateHolstered(t); continue; }
       if (t.held) continue;
       t.mesh.position.copy(t.a.pos);
