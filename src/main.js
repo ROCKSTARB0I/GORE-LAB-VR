@@ -1,8 +1,8 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, WALL_H, TICK, segSeg } from './physics.js?v=6';
-import { Dummy } from './ragdoll.js?v=6';
-import { Gore } from './gore.js?v=6';
-import { sfx, music } from './audio.js?v=6';
+import { World, Particle, HALF, WALL_H, TICK, segSeg } from './physics.js?v=7';
+import { Dummy } from './ragdoll.js?v=7';
+import { Gore } from './gore.js?v=7';
+import { sfx, music } from './audio.js?v=7';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -245,8 +245,8 @@ const MAX_DUMMIES = 12;
 
 const DUMMY_TYPES = {
   dummy: {},
-  zombie: { aggro: true, skin: 0x8faa72, speed: 1.3 },
-  brute: { hp: 320, tough: 3, shirt: 0x1d1f24, speed: 0.85 },
+  zombie: { aggro: true, skin: 0x8faa72, speed: 1.3, hair: 0x2b2f24 },
+  brute: { hp: 320, tough: 3, shirt: 0x1d1f24, speed: 0.85, hair: null },
 };
 function spawnDummy(x, z, type = 'dummy') {
   if (dummies.length >= MAX_DUMMIES) {
@@ -972,6 +972,7 @@ function fire(h, t) {
       gore.spray(hitPt, dirV, 9, 6, 0.35);
       gore.spray(hitPt, tv.copy(dirV).negate(), 4, 2, 0.6);
       if (d.alive && Math.random() < 0.5) sfx.grunt();
+      d.addWound(r.bone, hitPt, dirV, 'bullet');
       d.hit(r.bone, def.dmg, tv.copy(dirV).multiplyScalar(def.push), hitPt, { explode: def.gib || Math.random() < 0.35 });
       hitsPer.set(d, (hitsPer.get(d) || 0) + 1);
     } else if (r.kind === 'wall') gore.sparks(hitPt, 3);
@@ -1018,6 +1019,7 @@ function melee(h, t, dt) {
       bloody(h, 0.15); pulse(h, 1, 70);
       if (stab) {
         gore.spray(h.tip, tv2.copy(bladeDir).negate(), 14, 3, 0.7);
+        d.addWound(hit, h.tip, bladeDir, 'stab');
         d.stab(hit, tv2.copy(bladeDir).multiplyScalar(2));
         sfx.squish();
         stickTool(t, d, hit ? (hit.name === 'head' ? d.headMesh : hit.mesh) : d.torsoMesh, h);
@@ -1031,6 +1033,7 @@ function melee(h, t, dt) {
         sfx.thud();
       } else {
         gore.spray(at, tv, 16, 4, 0.6);
+        d.addWound(hit, at, tv, 'slash');
         d.hit(hit, hit ? def.dmg : 3, tv2.copy(tv).multiplyScalar(2.5), at);
         sfx.slice();
       }
