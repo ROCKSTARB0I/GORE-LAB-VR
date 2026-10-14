@@ -235,7 +235,7 @@ export const music = {
 // ---------------------------------------------------------------- voices
 // Each event can play any recorded clip listed in voice/manifest.json (see
 // voice/VOICE_LINES.md). Events with nothing recorded get a synthesized cry.
-const VOICE_EVENTS = {"hurt": ["hurt_01", "hurt_02", "hurt_03", "hurt_04", "hurt_05", "hurt_06"], "hurtBad": ["hurt_bad_01", "hurt_bad_02", "hurt_bad_03", "hurt_bad_04"], "stabbed": ["stabbed_01", "stabbed_02", "stabbed_03"], "dismember": ["dismember_01", "dismember_02", "dismember_03", "dismember_04"], "gutted": ["gutted_01", "gutted_02", "gutted_03"], "heart": ["heart_01", "heart_02"], "die": ["die_01", "die_02", "die_03", "die_04"], "burn": ["burn_start_01", "burn_start_02", "burn_start_03"], "burning": ["burning_01", "burning_02", "burning_03"], "burnDie": ["burn_die_01", "burn_die_02"], "choke": ["choke_01", "choke_02", "choke_03"], "passout": ["passout_01", "passout_02"], "wake": ["wake_01", "wake_02"], "grabbed": ["grabbed_01", "grabbed_02", "grabbed_03"], "attack": ["attack_01", "attack_02", "attack_03"], "taunt": ["taunt_01", "taunt_02"], "bomber": ["bomber_01", "bomber_02"]};
+const VOICE_EVENTS = {"hurt": ["hurt_01", "hurt_02", "hurt_03", "hurt_04", "hurt_05", "hurt_06"], "hurtBad": ["hurt_bad_01", "hurt_bad_02", "hurt_bad_03", "hurt_bad_04"], "stabbed": ["stabbed_01", "stabbed_02", "stabbed_03"], "dismember": ["dismember_02", "dismember_03", "dismember_04"], "dismemberArm": ["dismember_01", "dismember_02", "dismember_03", "dismember_04"], "gutted": ["gutted_01", "gutted_02", "gutted_03"], "heart": ["heart_01", "heart_02"], "die": ["die_01", "die_02", "die_03", "die_04"], "burn": ["burn_start_01", "burn_start_02", "burn_start_03"], "burning": ["burning_01", "burning_02", "burning_03"], "burnDie": ["burn_die_01", "burn_die_02"], "choke": ["choke_01", "choke_02", "choke_03"], "passout": ["passout_01", "passout_02"], "wake": ["wake_01", "wake_02"], "grabbed": ["grabbed_01", "grabbed_02", "grabbed_03"], "attack": ["attack_01", "attack_02", "attack_03"], "taunt": ["taunt_01", "taunt_02"], "bomber": ["bomber_01", "bomber_02"]};
 const voiceBufs = {};
 let voicesLoaded = false, voicesPlaying = 0;
 const listener = { x: 0, y: 1.6, z: 0, yaw: 0 };
@@ -316,7 +316,7 @@ sfx.voice = (ev, pos, type, scale = 1) => {
   switch (ev) {
     case 'hurt': case 'attack': case 'taunt': case 'grabbed': cry(out, 190 * p, 140 * p, 0.2, 0.35); break;
     case 'hurtBad': case 'stabbed': case 'gutted': cry(out, 260 * p, 380 * p, 0.55, 0.4, 12); break;
-    case 'dismember': case 'burn': case 'burning': cry(out, 340 * p, 560 * p, 0.9, 0.45, 25); break;
+    case 'dismember': case 'dismemberArm': case 'burn': case 'burning': cry(out, 340 * p, 560 * p, 0.9, 0.45, 25); break;
     case 'die': case 'heart': cry(out, 220 * p, 80 * p, 0.8, 0.35); breath(out, 0.9, 0.15, 500); break;
     case 'burnDie': cry(out, 420 * p, 120 * p, 1.1, 0.4, 20); break;
     case 'choke': for (let i = 0; i < 4; i++) setTimeout(() => breath(out, 0.12, 0.35, 350), i * 140); break;

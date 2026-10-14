@@ -2,7 +2,7 @@
 // walking pose while alive ("active ragdoll"), goes limp when dead, and can
 // lose its head and limbs.
 import * as THREE from '../vendor/three.module.js';
-import { Particle, HALF, segSeg } from './physics.js?v=31';
+import { Particle, HALF, segSeg } from './physics.js?v=32';
 
 // rest pose, facing +Z
 const REST = {
@@ -1076,7 +1076,7 @@ export class Dummy {
     for (const q of D) q.push(t2, w.dt);
     stub.push(t2, w.dt);
     this.bleeding += 1;
-    if (this.alive && bone.name !== 'head') Dummy.say(this, 'dismember');
+    if (this.alive && bone.name !== 'head') Dummy.say(this, bone.leg ? 'dismember' : 'dismemberArm');
     if (bone.name === 'head') this.die();
     else if (bone.leg && this.alive) { this.state = 'down'; this.downT = 1.2; }
   }

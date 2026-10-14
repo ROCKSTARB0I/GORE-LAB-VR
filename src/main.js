@@ -1,9 +1,9 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=31';
-import { Dummy, faceTex } from './ragdoll.js?v=31';
-import { Gore } from './gore.js?v=31';
-import { sfx, music } from './audio.js?v=31';
-import { net, SHIRTS, host as netHost, join as netJoin, send, sendPose, updateVoices, setMuted } from './net.js?v=31';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=32';
+import { Dummy, faceTex } from './ragdoll.js?v=32';
+import { Gore } from './gore.js?v=32';
+import { sfx, music } from './audio.js?v=32';
+import { net, SHIRTS, host as netHost, join as netJoin, send, sendPose, updateVoices, setMuted } from './net.js?v=32';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -2580,7 +2580,7 @@ function updateMainMenu() {
 }
 
 // ------------------------------------------------------------ voices
-const ALWAYS = new Set(['die', 'burnDie', 'heart', 'passout', 'dismember']);
+const ALWAYS = new Set(['die', 'burnDie', 'heart', 'passout', 'dismember', 'dismemberArm']);
 // One voice per dummy: a big line (death, losing a limb...) cuts off whatever he was
 // saying; anything else waits until he's finished talking.
 Dummy.onSay = (d, ev) => {
