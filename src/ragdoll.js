@@ -47,10 +47,11 @@ const eyeMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
 const t1 = new THREE.Vector3(), t2 = new THREE.Vector3(), t3 = new THREE.Vector3(), mb = new THREE.Matrix4();
 
 export class Dummy {
-  constructor(world, scene, fx, x, z, yaw) {
+  constructor(world, scene, fx, x, z, yaw, opts = {}) {
     this.world = world; this.scene = scene; this.fx = fx;
     this.root = { x, z }; this.yaw = yaw;
-    this.alive = true; this.hp = 100; this.state = 'stand';
+    this.alive = true; this.hp = opts.hp ?? 100; this.state = 'stand';
+    this.aggro = !!opts.aggro; this.speed = opts.speed ?? 1; this.gone = false;
     this.downT = 0; this.rise = 1; this.stun = 0; this.bleeding = 0; this.headGone = false;
     this.phase = Math.random() * 6; this.moveAmt = 0; this.time = Math.random() * 10;
     this.wanderT = 0; this.wanderYaw = yaw; this.wandering = false;
@@ -70,19 +71,19 @@ export class Dummy {
     for (const [a, b, len] of LIMITS) stick(a, b, { len, min: true });
 
     this.group = new THREE.Group(); scene.add(this.group);
-    const shirt = SHIRTS[Math.floor(Math.random() * SHIRTS.length)];
+    const shirt = opts.shirt ?? SHIRTS[Math.floor(Math.random() * SHIRTS.length)], skin = opts.skin ?? SKIN;
     this.bones = []; this.bone = {};
     for (const [name, a, b, r, hp, leg] of BONES) {
       const st = stick(a, b);
-      const bone = { name, a: this.p[a], b: this.p[b], r, hp, leg, stick: st, severed: false, mesh: null };
+      const bone = { name, a: this.p[a], b: this.p[b], r, hp: hp * (opts.tough ?? 1), leg, stick: st, severed: false, mesh: null };
       if (name !== 'head') {
-        const col = leg ? PANTS : (name.includes('Upper') ? shirt : SKIN);
+        const col = leg ? PANTS : (name.includes('Upper') ? shirt : skin);
         bone.mesh = new THREE.Mesh(capsule(r, st.len), new THREE.MeshLambertMaterial({ color: col }));
         this.group.add(bone.mesh);
       }
       this.bones.push(bone); this.bone[name] = bone;
     }
-    this.headMesh = new THREE.Mesh(headGeo, new THREE.MeshLambertMaterial({ color: SKIN }));
+    this.headMesh = new THREE.Mesh(headGeo, new THREE.MeshLambertMaterial({ color: skin }));
     for (const ex of [-0.042, 0.042]) { const e = new THREE.Mesh(eyeGeo, eyeMat); e.position.set(ex, 0.02, 0.1); this.headMesh.add(e); }
     this.torsoMesh = new THREE.Mesh(torsoGeo, new THREE.MeshLambertMaterial({ color: shirt }));
     this.group.add(this.headMesh, this.torsoMesh);
@@ -121,7 +122,7 @@ export class Dummy {
     // standing / walking
     this.rise = Math.min(1, this.rise + h * 0.9);
     let speed = 0, want = this.yaw;
-    if (hostile) { want = Math.atan2(dx, dz); speed = dist > 0.95 ? 1.15 : 0; }
+    if (hostile) { want = Math.atan2(dx, dz); speed = dist > 0.95 ? 1.15 * this.speed : 0; }
     else {
       this.wanderT -= h;
       if (this.wanderT <= 0) { this.wanderT = 2 + Math.random() * 4; this.wandering = Math.random() < 0.5; this.wanderYaw = Math.random() * Math.PI * 2; }
@@ -195,6 +196,15 @@ export class Dummy {
         else if (part.hp <= 0) this.sever(part);
       } else if (part.hp <= 0 && !part.severed) this.sever(part);
     }
+    if (this.hp <= 0) this.die();
+  }
+  // a blade pushed in: big damage, no dismemberment
+  stab(part, dv) {
+    const h = this.world.dt, P = this.p;
+    this.stun = 1.5;
+    if (!part) { for (const k of ['chest', 'pelvis']) P[k].push(dv, h); this.tint(this.torsoMesh); this.hp -= 45; }
+    else { part.a.push(dv, h); part.b.push(dv, h); this.tint(part.mesh ?? this.headMesh); this.hp -= part.name === 'head' ? 400 : 12; }
+    this.bleeding += 0.5;
     if (this.hp <= 0) this.die();
   }
   tint(mesh) { mesh.material.color.lerp(GORE_COL, 0.3); }
@@ -286,7 +296,7 @@ export class Dummy {
   }
 
   dispose() {
-    this.scene.remove(this.group);
+    this.scene.remove(this.group); this.gone = true;
     for (const p of this.all) p.gone = true;
     this.p.head.gone = true;
     this.world.removeBody(this);

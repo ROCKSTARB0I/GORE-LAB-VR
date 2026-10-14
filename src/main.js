@@ -77,13 +77,13 @@ const world = new World();
 const gore = new Gore(scene, world);
 
 // weapon table, to the player's left
-const TABLE = { min: new V3(-2.2, 0.84, -1.4), max: new V3(-1.4, 0.9, 0.6) };
+const TABLE = { min: new V3(-2.45, 0.84, -3.55), max: new V3(-1.35, 0.9, 0.8) };
 world.boxes.push(TABLE);
 {
   const mat = new THREE.MeshLambertMaterial({ color: 0x4a5059 });
-  const top = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.06, 2.0), mat);
-  top.position.set(-1.8, 0.87, -0.4); scene.add(top);
-  for (const x of [-2.15, -1.45]) for (const z of [-1.35, 0.55]) {
+  const top = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.06, 4.35), mat);
+  top.position.set(-1.9, 0.87, -1.375); scene.add(top);
+  for (const x of [-2.4, -1.4]) for (const z of [-3.5, -1.375, 0.75]) {
     const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.84, 0.05), mat);
     leg.position.set(x, 0.42, z); scene.add(leg);
   }
@@ -91,16 +91,21 @@ world.boxes.push(TABLE);
 
 const S = { kills: 0, hostile: false, slowmo: false, lowG: false };
 const dummies = [], barrels = [], balls = [], tools = [];
-const MAX_DUMMIES = 10;
+const MAX_DUMMIES = 12;
 
-function spawnDummy(x, z) {
+const DUMMY_TYPES = {
+  dummy: {},
+  zombie: { aggro: true, skin: 0x8faa72, speed: 1.3 },
+  brute: { hp: 320, tough: 3, shirt: 0x1d1f24, speed: 0.85 },
+};
+function spawnDummy(x, z, type = 'dummy') {
   if (dummies.length >= MAX_DUMMIES) {
     const i = Math.max(0, dummies.findIndex(d => !d.alive));
     releaseBody(dummies[i]); dummies[i].dispose(); dummies.splice(i, 1);
   }
-  x ??= (Math.random() - 0.5) * 10; z ??= -3 - Math.random() * 4;
+  x ??= (Math.random() - 0.5) * 10; z ??= -4.2 - Math.random() * 3;
   const head = headPos();
-  const d = new Dummy(world, scene, gore, x, z, Math.atan2(head.x - x, head.z - z));
+  const d = new Dummy(world, scene, gore, x, z, Math.atan2(head.x - x, head.z - z), DUMMY_TYPES[type]);
   d.onDeath = () => { S.kills++; drawPanel(); };
   dummies.push(d);
   return d;
@@ -142,11 +147,16 @@ function explode(barrel) {
   const c = new V3().addVectors(barrel.a.pos, barrel.b.pos).multiplyScalar(0.5);
   releaseBody(barrel);
   world.removeBody(barrel); scene.remove(barrel.mesh);
+  blast(c, 5);
+}
+
+// explosion at c: throws everything within R, tears up dummies, sets off other explosives
+function blast(c, R = 5) {
   sfx.boom(); pulseAll(1, 200);
   const mesh = new THREE.Mesh(blastGeo, new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.9, depthWrite: false }));
-  mesh.position.copy(c); scene.add(mesh); explosions.push({ mesh, t: 0 });
+  mesh.position.copy(c); scene.add(mesh); explosions.push({ mesh, t: 0, size: R / 5 });
   gore.sparks(c, 40);
-  const R = 5, h = world.dt;
+  const h = world.dt;
   for (const p of world.particles) {
     const d = p.pos.distanceTo(c);
     if (d > R || p.pinned) continue;
@@ -154,80 +164,255 @@ function explode(barrel) {
     p.push(tv, h);
   }
   for (const d of dummies) {
-    const dist = d.p.pelvis.pos.distanceTo(c);
-    if (dist > 4.5) continue;
-    d.hp -= 220 * (1 - dist / 4.5); d.knockdown(3.5);
-    if (dist < 3.2) {
+    const dist = d.p.pelvis.pos.distanceTo(c), kill = R * 0.9;
+    if (dist > kill) continue;
+    d.hp -= 220 * (1 - dist / kill); d.knockdown(3.5);
+    if (dist < R * 0.64) {
       const limbs = d.bones.filter(b => !b.severed && b.name !== 'head');
-      for (let n = dist < 1.8 ? 4 : 2; n > 0 && limbs.length; n--) d.sever(limbs.splice(Math.floor(Math.random() * limbs.length), 1)[0]);
-      if (dist < 2.2) d.explodeHead();
+      for (let n = dist < R * 0.36 ? 4 : 2; n > 0 && limbs.length; n--) d.sever(limbs.splice(Math.floor(Math.random() * limbs.length), 1)[0]);
+      if (dist < R * 0.44) d.explodeHead();
       gore.spray(d.p.chest.pos, UP, 30, 5, 1.2);
     }
     if (d.hp <= 0) d.die();
   }
   for (const b of [...barrels]) if (b.a.pos.distanceTo(c) < 3.5) setTimeout(() => explode(b), 120 + Math.random() * 200);
+  for (const g of grenades) if (g.p.pos.distanceTo(c) < 3 && (g.fuse < 0 || g.fuse > 0.3)) g.fuse = 0.1 + Math.random() * 0.2;
+  for (const m of mines) if (Math.hypot(m.x - c.x, m.z - c.z) < 3) m.trigger = true;
 }
 
-// ------------------------------------------------------------ tools (guns + machete)
+const grenades = [], mines = [], rockets = [];
+const grenadeGeo = new THREE.SphereGeometry(0.055, 10, 8);
+function spawnGrenade(x, y, z) {
+  const g = { fuse: -1, mesh: new THREE.Mesh(grenadeGeo, new THREE.MeshLambertMaterial({ color: 0x3f5a2a })) };
+  g.p = new Particle(x, y, z, 0.055, 0.8); g.p.body = g; g.p.grab = g; g.p.bounce = 0.35;
+  world.add(g.p); world.colliders.push(g.p);
+  scene.add(g.mesh); grenades.push(g);
+  return g;
+}
+function removeGrenade(g) {
+  releaseBody(g); world.removeBody(g); scene.remove(g.mesh);
+  grenades.splice(grenades.indexOf(g), 1);
+}
+const mineGeo = new THREE.CylinderGeometry(0.13, 0.16, 0.05, 12), mineLampGeo = new THREE.SphereGeometry(0.025, 8, 6);
+function spawnMine(x, z) {
+  const m = { x, z, t: 0, trigger: false, mesh: new THREE.Mesh(mineGeo, new THREE.MeshLambertMaterial({ color: 0x2c3327 })) };
+  m.lamp = new THREE.Mesh(mineLampGeo, new THREE.MeshBasicMaterial({ color: 0x551111 }));
+  m.lamp.position.y = 0.035; m.mesh.add(m.lamp);
+  m.mesh.position.set(x, 0.025, z); scene.add(m.mesh); mines.push(m);
+}
+const rocketGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.3, 8); rocketGeo.rotateX(Math.PI / 2);
+function spawnRocket(pos, dir) {
+  const r = { pos: pos.clone(), dir: dir.clone(), life: 4, mesh: new THREE.Mesh(rocketGeo, new THREE.MeshLambertMaterial({ color: 0xb3261e })) };
+  r.mesh.position.copy(pos); r.mesh.lookAt(tv.copy(pos).add(dir));
+  scene.add(r.mesh); rockets.push(r);
+}
+// sdt = simulated seconds (slow-mo applies)
+function updateExplosives(sdt) {
+  for (let i = grenades.length - 1; i >= 0; i--) {
+    const g = grenades[i];
+    g.mesh.position.copy(g.p.pos);
+    if (g.fuse < 0) continue;
+    g.fuse -= sdt;
+    g.mesh.material.emissive.setHex(Math.sin(g.fuse * 30) > 0 ? 0xff2200 : 0);
+    if (g.fuse <= 0) { const c = g.p.pos.clone(); removeGrenade(g); blast(c, 4.5); }
+  }
+  for (let i = mines.length - 1; i >= 0; i--) {
+    const m = mines[i];
+    m.t += sdt;
+    const armed = m.t > 1.5;
+    m.lamp.material.color.setHex(armed && Math.sin(m.t * 8) > 0 ? 0xff2200 : 0x551111);
+    if (armed && !m.trigger) {
+      for (const d of dummies) for (const p of d.all) {
+        const dx = p.pos.x - m.x, dz = p.pos.z - m.z;
+        if (p.pos.y < 0.5 && dx * dx + dz * dz < 0.2) { m.trigger = true; break; }
+      }
+    }
+    if (m.trigger) { scene.remove(m.mesh); mines.splice(i, 1); blast(new V3(m.x, 0.15, m.z), 4.5); }
+  }
+  for (let i = rockets.length - 1; i >= 0; i--) {
+    const r = rockets[i];
+    r.life -= sdt;
+    const step = 30 * sdt, hit = hitscan(r.pos, r.dir);
+    if (hit.t <= step + 0.15 || r.life <= 0) {
+      const c = r.pos.clone().addScaledVector(r.dir, Math.max(0, Math.min(hit.t, step) - 0.15));
+      scene.remove(r.mesh); r.mesh.material.dispose(); rockets.splice(i, 1);
+      blast(c, 5.5);
+    } else {
+      r.pos.addScaledVector(r.dir, step); r.mesh.position.copy(r.pos);
+      gore.sparks(r.pos, 1);
+    }
+  }
+}
+
+// ------------------------------------------------------------ tools (guns, blades, spawn gun)
 const GUNS = {
-  pistol: { len: 0.2, auto: false, cool: 0.13, pellets: 1, spread: 0.004, dmg: 1, push: 3.5, kick: 0.25, muzzle: [0, 0.03, -0.18] },
-  smg: { len: 0.3, auto: true, cool: 0.075, pellets: 1, spread: 0.02, dmg: 0.7, push: 2.5, kick: 0.1, muzzle: [0, 0.035, -0.27] },
-  shotgun: { len: 0.62, auto: false, cool: 0.65, pellets: 9, spread: 0.06, dmg: 1, push: 3.2, kick: 0.5, muzzle: [0, 0.04, -0.62] },
-  machete: { len: 0.66, melee: true },
+  spawngun: { name: 'Spawn gun', len: 0.25, spawner: true, cool: 0.3, kick: 0.05, muzzle: [0, 0.03, -0.27] },
+  pistol: { name: 'Pistol', len: 0.2, cool: 0.13, pellets: 1, spread: 0.004, dmg: 1, push: 3.5, kick: 0.25, muzzle: [0, 0.03, -0.18] },
+  revolver: { name: 'Revolver', len: 0.24, cool: 0.4, pellets: 1, spread: 0.002, dmg: 3, push: 7, kick: 0.7, gib: true, sound: 'revolver', muzzle: [0, 0.035, -0.23] },
+  smg: { name: 'SMG', len: 0.3, auto: true, cool: 0.075, pellets: 1, spread: 0.02, dmg: 0.7, push: 2.5, kick: 0.1, sound: 'smg', muzzle: [0, 0.035, -0.27] },
+  rifle: { name: 'Assault rifle', len: 0.55, auto: true, cool: 0.1, pellets: 1, spread: 0.012, dmg: 1.3, push: 3.5, kick: 0.14, sound: 'rifle', muzzle: [0, 0.04, -0.6] },
+  shotgun: { name: 'Shotgun', len: 0.62, cool: 0.65, pellets: 9, spread: 0.06, dmg: 1, push: 3.2, kick: 0.5, gib: true, sound: 'shotgun', muzzle: [0, 0.04, -0.62] },
+  rocket: { name: 'Rocket launcher', len: 0.7, cool: 1.0, rocket: true, kick: 0.4, sound: 'rocket', muzzle: [0, 0.06, -0.66] },
+  knife: { name: 'Knife', len: 0.27, melee: true, blade: 0.4, dmg: 2, tiltVR: 0.25, tiltDesk: 0.1, thrust: true },
+  machete: { name: 'Machete', len: 0.66, melee: true, blade: 0.2, dmg: 4 },
+  katana: { name: 'Katana', len: 0.98, melee: true, blade: 0.22, dmg: 6 },
+  bat: { name: 'Baseball bat', len: 0.8, melee: true, blade: 0.3, dmg: 1, blunt: true },
 };
+const DEFAULT_TOOLS = Object.keys(GUNS);
 const M = {
   dark: new THREE.MeshLambertMaterial({ color: 0x23262b }), grey: new THREE.MeshLambertMaterial({ color: 0x555b64 }),
   wood: new THREE.MeshLambertMaterial({ color: 0x7a4a26 }), steel: new THREE.MeshLambertMaterial({ color: 0xcfd6de }),
+  olive: new THREE.MeshLambertMaterial({ color: 0x4d5a3a }), white: new THREE.MeshLambertMaterial({ color: 0xdfe6ee }),
+  red: new THREE.MeshLambertMaterial({ color: 0xb3261e }), cyan: new THREE.MeshBasicMaterial({ color: 0x35e0ff }),
   flash: new THREE.MeshBasicMaterial({ color: 0xffe08a }),
 };
 function box(parent, mat, w, h, d, x, y, z, rx = 0) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
   m.position.set(x, y, z); m.rotation.x = rx; parent.add(m); return m;
 }
+// cylinder lying along the tool's length (z)
+function cyl(parent, mat, rFront, rBack, len, x, y, z) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(rBack, rFront, len, 10), mat);
+  m.rotation.x = Math.PI / 2; m.position.set(x, y, z); parent.add(m); return m;
+}
+// every tool is modelled with its grip at the origin, pointing down -Z
 function buildToolMesh(kind) {
   const g = new THREE.Group();
-  if (kind === 'pistol') {
-    box(g, M.dark, 0.034, 0.045, 0.2, 0, 0.03, -0.08); box(g, M.grey, 0.03, 0.1, 0.042, 0, -0.035, 0.005, -0.22);
-  } else if (kind === 'smg') {
-    box(g, M.dark, 0.045, 0.07, 0.3, 0, 0.03, -0.11); box(g, M.grey, 0.03, 0.15, 0.04, 0, -0.07, -0.12);
-    box(g, M.grey, 0.032, 0.1, 0.042, 0, -0.04, 0.01, -0.22); box(g, M.dark, 0.03, 0.03, 0.08, 0, 0.035, -0.29);
-  } else if (kind === 'shotgun') {
-    box(g, M.dark, 0.04, 0.04, 0.62, 0, 0.04, -0.31); box(g, M.wood, 0.05, 0.05, 0.17, 0, 0.005, -0.33);
-    box(g, M.wood, 0.04, 0.075, 0.26, 0, 0.0, 0.14, 0.12); box(g, M.grey, 0.045, 0.06, 0.14, 0, 0.03, -0.03);
-  } else {
-    box(g, M.wood, 0.03, 0.035, 0.15, 0, 0, -0.04); box(g, M.steel, 0.006, 0.065, 0.52, 0, 0.012, -0.39);
+  switch (kind) {
+    case 'pistol':
+      box(g, M.dark, 0.034, 0.045, 0.2, 0, 0.03, -0.08); box(g, M.grey, 0.03, 0.1, 0.042, 0, -0.035, 0.005, -0.22); break;
+    case 'revolver':
+      box(g, M.steel, 0.028, 0.034, 0.17, 0, 0.037, -0.14); cyl(g, M.grey, 0.03, 0.03, 0.055, 0, 0.03, -0.03);
+      box(g, M.wood, 0.03, 0.1, 0.042, 0, -0.04, 0.02, -0.3); box(g, M.steel, 0.02, 0.03, 0.05, 0, 0.03, 0.02); break;
+    case 'smg':
+      box(g, M.dark, 0.045, 0.07, 0.3, 0, 0.03, -0.11); box(g, M.grey, 0.03, 0.15, 0.04, 0, -0.07, -0.12);
+      box(g, M.grey, 0.032, 0.1, 0.042, 0, -0.04, 0.01, -0.22); box(g, M.dark, 0.03, 0.03, 0.08, 0, 0.035, -0.29); break;
+    case 'rifle':
+      box(g, M.dark, 0.045, 0.075, 0.42, 0, 0.03, -0.14); cyl(g, M.grey, 0.012, 0.012, 0.26, 0, 0.04, -0.47);
+      box(g, M.wood, 0.034, 0.18, 0.055, 0, -0.09, -0.16, 0.3); box(g, M.wood, 0.04, 0.075, 0.24, 0, 0.012, 0.18, 0.1);
+      box(g, M.wood, 0.05, 0.05, 0.16, 0, 0.02, -0.33); box(g, M.grey, 0.032, 0.1, 0.042, 0, -0.04, 0.01, -0.22); break;
+    case 'shotgun':
+      box(g, M.dark, 0.04, 0.04, 0.62, 0, 0.04, -0.31); box(g, M.wood, 0.05, 0.05, 0.17, 0, 0.005, -0.33);
+      box(g, M.wood, 0.04, 0.075, 0.26, 0, 0.0, 0.14, 0.12); box(g, M.grey, 0.045, 0.06, 0.14, 0, 0.03, -0.03); break;
+    case 'rocket':
+      cyl(g, M.olive, 0.055, 0.055, 0.95, 0, 0.06, -0.18); cyl(g, M.dark, 0.07, 0.055, 0.1, 0, 0.06, -0.62);
+      cyl(g, M.dark, 0.055, 0.075, 0.1, 0, 0.06, 0.3); box(g, M.dark, 0.03, 0.1, 0.04, 0, -0.03, 0.0, -0.15);
+      box(g, M.red, 0.02, 0.05, 0.08, 0, 0.13, -0.2); break;
+    case 'knife':
+      box(g, M.dark, 0.026, 0.032, 0.1, 0, 0, -0.03); box(g, M.grey, 0.05, 0.014, 0.012, 0, 0, -0.085);
+      box(g, M.steel, 0.005, 0.03, 0.17, 0, 0.002, -0.175); break;
+    case 'machete':
+      box(g, M.wood, 0.03, 0.035, 0.15, 0, 0, -0.04); box(g, M.steel, 0.006, 0.065, 0.52, 0, 0.012, -0.39); break;
+    case 'katana':
+      box(g, M.dark, 0.028, 0.032, 0.24, 0, 0, -0.06); box(g, M.grey, 0.065, 0.065, 0.008, 0, 0, -0.185);
+      box(g, M.steel, 0.005, 0.034, 0.78, 0, 0.004, -0.58); break;
+    case 'bat':
+      cyl(g, M.wood, 0.036, 0.017, 0.8, 0, 0, -0.38); cyl(g, M.dark, 0.022, 0.022, 0.03, 0, 0, 0.03); break;
+    case 'spawngun': {
+      box(g, M.white, 0.06, 0.08, 0.2, 0, 0.03, -0.09); box(g, M.dark, 0.034, 0.1, 0.045, 0, -0.045, 0.005, -0.22);
+      cyl(g, M.cyan, 0.022, 0.032, 0.08, 0, 0.03, -0.22); box(g, M.dark, 0.062, 0.02, 0.12, 0, 0.075, -0.09);
+      const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.26), new THREE.MeshBasicMaterial({ map: menuTex }));
+      screen.position.set(0, 0.24, -0.06); screen.rotation.x = -0.3; g.add(screen);
+      break;
+    }
   }
   return g;
 }
-const TOOL_HOME = { pistol: -0.95, smg: -0.55, shotgun: -0.1, machete: 0.35 };
-function makeTool(kind) {
+function makeTool(kind, x, y, z) {
   const def = GUNS[kind];
-  const t = { kind, def, mesh: buildToolMesh(kind), held: null, cool: 0, recoil: 0, flashT: 0 };
-  t.a = new Particle(0, 0, 0, 0.04, 1); t.b = new Particle(0, 0, 0, 0.035, 1);
+  const t = { kind, def, mesh: buildToolMesh(kind), held: null, stuck: null, cool: 0, recoil: 0, flashT: 0 };
+  t.a = new Particle(x + def.len / 2, y, z, 0.04, 1); t.b = new Particle(x - def.len / 2, y, z, 0.035, 1);
   t.a.body = t.b.body = t;
   world.add(t.a); world.add(t.b); world.stick(t.a, t.b, { len: def.len, body: t });
-  if (!def.melee) {
+  if (def.muzzle) {
     t.muzzle = new THREE.Object3D(); t.muzzle.position.fromArray(def.muzzle); t.mesh.add(t.muzzle);
-    t.flash = new THREE.Mesh(new THREE.SphereGeometry(kind === 'shotgun' ? 0.07 : 0.045, 8, 6), M.flash);
+    t.flash = new THREE.Mesh(new THREE.SphereGeometry(kind === 'shotgun' || kind === 'rocket' ? 0.07 : 0.045, 8, 6), def.spawner ? M.cyan : M.flash);
     t.flash.visible = false; t.muzzle.add(t.flash);
   }
   scene.add(t.mesh); tools.push(t);
+  if (tools.length > 30) { const old = tools.find(o => !o.held && !o.stuck && o !== t); if (old) removeTool(old); }
   return t;
 }
-function homeTool(t) {
+function removeTool(t) {
   if (t.held) { t.held.held = null; t.held = null; }
-  const z = TOOL_HOME[t.kind], x0 = -1.8 - t.def.len / 2;
-  t.a.pinned = t.b.pinned = false;
-  t.a.pos.set(x0 + t.def.len, 0.96, z); t.b.pos.set(x0, 0.96, z);
-  t.a.prev.copy(t.a.pos); t.b.prev.copy(t.b.pos);
+  world.removeBody(t); scene.remove(t.mesh);
+  tools.splice(tools.indexOf(t), 1);
 }
 function resetItems() {
-  for (const t of tools) homeTool(t);
+  for (const t of [...tools]) removeTool(t);
+  DEFAULT_TOOLS.forEach((k, i) => makeTool(k, -1.9, 0.96, 0.3 - i * 0.36));
   for (const b of balls) { releaseBody(b); world.removeBody(b); scene.remove(b.mesh); }
   balls.length = 0;
   spawnBall(1.6, 0.3, -0.6, 0x2f7fd1); spawnBall(2.0, 0.3, -0.9, 0xe0c020);
+  for (const g of [...grenades]) removeGrenade(g);
+  for (const x of [-2.15, -1.9, -1.65]) spawnGrenade(x, 0.97, 0.62);
 }
-for (const k in GUNS) makeTool(k);
+
+// ------------------------------------------------------------ spawn gun menu
+const MENU = [
+  { name: 'WEAPONS', items: DEFAULT_TOOLS.filter(k => k !== 'spawngun').map(k => [GUNS[k].name, p => makeTool(k, p.x, p.y + 0.35, p.z)]).concat([['Spawn gun', p => makeTool('spawngun', p.x, p.y + 0.35, p.z)]]) },
+  { name: 'NPCS', items: [
+    ['Dummy', p => spawnDummy(p.x, p.z)],
+    ['Zombie', p => spawnDummy(p.x, p.z, 'zombie')],
+    ['Brute', p => spawnDummy(p.x, p.z, 'brute')],
+    ['Crowd x5', p => { for (let i = 0; i < 5; i++) spawnDummy(p.x + (Math.random() - 0.5) * 3, p.z + (Math.random() - 0.5) * 3); }],
+    ['Zombie horde x5', p => { for (let i = 0; i < 5; i++) spawnDummy(p.x + (Math.random() - 0.5) * 3, p.z + (Math.random() - 0.5) * 3, 'zombie'); }],
+  ] },
+  { name: 'PROPS', items: [
+    ['Explosive barrel', p => spawnBarrel(p.x, p.z)],
+    ['Grenade', p => spawnGrenade(p.x, p.y + 0.3, p.z)],
+    ['Land mine', p => spawnMine(p.x, p.z)],
+    ['Bouncy ball', p => spawnBall(p.x, p.y + 0.4, p.z, [0x2f7fd1, 0xe0c020, 0x3f9b62, 0xd9772b][Math.floor(Math.random() * 4)])],
+  ] },
+  { name: 'WORLD', items: [
+    [() => 'Hostile: ' + (S.hostile ? 'ON' : 'OFF'), () => { panelCd = 0; press(4); }],
+    [() => 'Slow-mo: ' + (S.slowmo ? 'ON' : 'OFF'), () => { panelCd = 0; press(5); }],
+    [() => 'Low gravity: ' + (S.lowG ? 'ON' : 'OFF'), () => { panelCd = 0; press(6); }],
+    ['Clear everything', () => { panelCd = 0; press(3); }],
+    ['Reset items', () => { panelCd = 0; press(7); }],
+  ] },
+];
+const menu = { cat: 0, idx: MENU.map(() => 0) };
+const menuCanvas = document.createElement('canvas'); menuCanvas.width = menuCanvas.height = 512;
+const menuTex = new THREE.CanvasTexture(menuCanvas); menuTex.colorSpace = THREE.SRGBColorSpace;
+function drawMenu() {
+  const g = menuCanvas.getContext('2d'), W = 512, cat = MENU[menu.cat], sel = menu.idx[menu.cat];
+  g.fillStyle = '#10141a'; g.fillRect(0, 0, W, W);
+  g.fillStyle = '#35e0ff'; g.fillRect(0, 0, W, 78);
+  g.fillStyle = '#10141a'; g.font = 'bold 44px Helvetica, Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText('◀  ' + cat.name + '  ▶', W / 2, 41);
+  g.font = 'bold 36px Helvetica, Arial, sans-serif'; g.textAlign = 'left';
+  const rows = 7, first = Math.max(0, Math.min(sel - 3, cat.items.length - rows));
+  for (let r = 0; r < rows && first + r < cat.items.length; r++) {
+    const i = first + r, y = 96 + r * 58, label = cat.items[i][0];
+    if (i === sel) { g.fillStyle = '#e8792b'; g.fillRect(10, y, W - 20, 52); }
+    g.fillStyle = i === sel ? '#10141a' : '#e6e9ed';
+    g.fillText(typeof label === 'function' ? label() : label, 28, y + 27);
+  }
+  g.fillStyle = '#7d8794'; g.font = '24px Helvetica, Arial, sans-serif'; g.textAlign = 'center';
+  g.fillText((sel + 1) + ' / ' + cat.items.length, W / 2, W - 16);
+  menuTex.needsUpdate = true;
+  const hud = $('spawnHud');
+  if (hud) { const label = cat.items[sel][0]; hud.textContent = 'SPAWN GUN · ' + cat.name + ' · ' + (typeof label === 'function' ? label() : label); }
+}
+function menuMove(dCat, dItem) {
+  if (dCat) menu.cat = (menu.cat + dCat + MENU.length) % MENU.length;
+  const n = MENU[menu.cat].items.length;
+  if (dItem) menu.idx[menu.cat] = (menu.idx[menu.cat] + dItem + n) % n;
+  sfx.tick(); drawMenu();
+}
+const spawnDot = new THREE.Mesh(new THREE.SphereGeometry(0.04, 10, 8), M.cyan);
+spawnDot.visible = false; scene.add(spawnDot);
+const spawnPt = new V3();
+// where the spawn gun is pointing: just in front of whatever the beam hits, kept inside the room
+function spawnAim(o, d) {
+  const r = hitscan(o, d);
+  spawnPt.copy(o).addScaledVector(d, Math.max(0.3, r.t - 0.25));
+  const lim = HALF - 0.6;
+  spawnPt.x = Math.max(-lim, Math.min(lim, spawnPt.x)); spawnPt.z = Math.max(-lim, Math.min(lim, spawnPt.z));
+  spawnPt.y = Math.max(0, Math.min(WALL_H - 1, spawnPt.y));
+  return spawnPt;
+}
 
 // ------------------------------------------------------------ tracers
 const tracers = [];
@@ -278,6 +463,7 @@ function drawPanel() {
     g.fillStyle = '#f2f4f7'; g.fillText(text, x + bw / 2, y + bh / 2);
   });
   panelTex.needsUpdate = true;
+  drawMenu();
   $('kills').textContent = 'KILLS ' + S.kills;
 }
 function panelIndex(y, z) {
@@ -296,6 +482,10 @@ function clearAll() {
   dummies.length = 0;
   for (const b of barrels) { releaseBody(b); world.removeBody(b); scene.remove(b.mesh); }
   barrels.length = 0;
+  for (const g of [...grenades]) removeGrenade(g);
+  for (const m of mines) scene.remove(m.mesh);
+  for (const r of rockets) scene.remove(r.mesh);
+  mines.length = rockets.length = 0;
   gore.clear(); S.kills = 0;
   for (const h of [...vrHands, desk]) bloody(h, -1);
 }
@@ -424,7 +614,18 @@ function grab(h) {
   }
   if (!best) return;
   h.held = best;
-  if (best.type === 'tool') { best.tool.held = h; best.tool.a.pinned = best.tool.b.pinned = true; h.hasTip = false; }
+  if (best.type === 'tool') {
+    const t = best.tool;
+    if (t.stuck) {
+      // yank it back out
+      const d = t.stuck.d;
+      gore.spray(t.b.pos, tv.subVectors(t.a.pos, t.b.pos).normalize(), 18, 3.5, 0.6);
+      gore.emitter(d.p.chest, 3, 20);
+      d.bleeding += 0.5; d.sliceCd = 0.4; t.stuck = null;
+      sfx.squish(); bloody(h, 0.2);
+    }
+    t.held = h; t.a.pinned = t.b.pinned = true; h.hasTip = false;
+  }
   else {
     best.p.pinned = true; h.holdDist = Math.max(0.6, Math.min(1.6, best.dist ?? 0.9));
     const b = best.p.body;
@@ -439,6 +640,7 @@ function drop(h) {
   const ps = held.type === 'tool' ? [held.tool.a, held.tool.b] : [held.p];
   if (held.type === 'tool') held.tool.held = null;
   for (const p of ps) { p.pinned = false; p.prev.copy(p.pos).addScaledVector(h.vel, -TICK); }
+  if (held.type === 'particle' && held.p.grab?.fuse === -1) held.p.grab.fuse = 2.5;
 }
 // let go of anything belonging to a body that is about to be removed
 function releaseBody(body) {
@@ -446,6 +648,7 @@ function releaseBody(body) {
 }
 
 const TOOL_TILT = new THREE.Quaternion();
+let spawnDotOn = false;
 function updateHand(h, dt) {
   h.prevPos.copy(h.pos);
   if (h.ctrl) {
@@ -462,7 +665,7 @@ function updateHand(h, dt) {
     const u = h.jab > 0 ? Math.sin(Math.PI * (1 - h.jab / 0.22)) : 0;
     if (h.held?.type === 'particle') tv.set(0, 0, -h.holdDist);
     else tv.set(0.22, -0.2, -0.45 - u * 0.65);
-    if (h.held?.tool?.def.melee) {
+    if (h.held?.tool?.def.melee && !h.held.tool.def.thrust) {
       // swing the blade across the view
       const sw = h.jab > 0 ? 1.1 - 2.2 * (1 - h.jab / 0.22) : 1.1;
       tv.set(0.22 - (1.1 - sw) * 0.2, -0.2, -0.5 - u * 0.4);
@@ -488,14 +691,19 @@ function updateHand(h, dt) {
     const t = held.tool;
     t.recoil = Math.max(0, t.recoil - dt * 4);
     tq.copy(h.quat);
-    if (t.def.melee) tq.multiply(TOOL_TILT.setFromAxisAngle(tv.set(1, 0, 0), inVR ? 1.0 : 0.45));
+    if (t.def.melee) tq.multiply(TOOL_TILT.setFromAxisAngle(tv.set(1, 0, 0), inVR ? t.def.tiltVR ?? 1.0 : t.def.tiltDesk ?? 0.45));
     tv.copy(NEG_Z).applyQuaternion(tq);
     t.a.pos.copy(h.pos); t.b.pos.copy(h.pos).addScaledVector(tv, t.def.len);
     t.a.prev.copy(t.a.pos); t.b.prev.copy(t.b.pos);
     t.mesh.position.copy(h.pos);
     t.mesh.quaternion.copy(tq).multiply(TOOL_TILT.setFromAxisAngle(tv.set(1, 0, 0), t.recoil));
     t.mesh.updateMatrixWorld(true);
-    if (t.def.melee) slice(h, t, dt);
+    if (t.def.spawner) {
+      t.muzzle.getWorldPosition(fromV);
+      spawnDot.position.copy(spawnAim(h.ctrl ? fromV : h.aimFrom, dirV.copy(NEG_Z).applyQuaternion(h.quat)));
+      spawnDotOn = true;
+    }
+    if (t.def.melee) melee(h, t, dt);
     else {
       t.cool -= dt;
       const want = t.def.auto ? h.trigger : (h.trigger && !h.wasTrigger);
@@ -536,16 +744,25 @@ function hitscan(o, d) {
   for (const dm of dummies) { const r = dm.raycast(o, rayEnd); if (r) take(r.s * L, 'dummy', { dummy: dm, bone: r.bone }); }
   for (const b of barrels) if (segSeg(o, rayEnd, b.a.pos, b.b.pos) < 0.28 * 0.28) take(segSeg.s * L - 0.2, 'barrel', { barrel: b });
   for (const b of balls) if (segSeg(o, rayEnd, b.p.pos, b.p.pos) < 0.14 * 0.14) take(segSeg.s * L, 'ball', { ball: b });
+  for (const g of grenades) if (segSeg(o, rayEnd, g.p.pos, g.p.pos) < 0.09 * 0.09) take(segSeg.s * L, 'grenade', { grenade: g });
   return best;
 }
 
 function fire(h, t) {
   const def = t.def;
   t.cool = def.cool; t.recoil = def.kick; t.flashT = 0.05; t.flash.visible = true;
-  sfx.shot(t.kind); pulse(h, t.kind === 'shotgun' ? 1 : 0.6, t.kind === 'shotgun' ? 120 : 50);
   t.muzzle.getWorldPosition(fromV);
   // on desktop aim through the crosshair, not along the offset gun
   const o = h.ctrl ? fromV : h.aimFrom;
+  dirV.copy(NEG_Z).applyQuaternion(h.quat);
+  if (def.spawner) {
+    const p = spawnAim(o, dirV), item = MENU[menu.cat].items[menu.idx[menu.cat]];
+    item[1](p.clone());
+    tracer(fromV, p); sfx.spawn(); pulse(h, 0.5, 40); drawMenu();
+    return;
+  }
+  sfx.shot(def.sound); pulse(h, def.kick > 0.4 ? 1 : 0.6, def.kick > 0.4 ? 120 : 50);
+  if (def.rocket) { spawnRocket(fromV, dirV); return; }
   const hitsPer = new Map();
   for (let i = 0; i < def.pellets; i++) {
     dirV.copy(NEG_Z).applyQuaternion(h.quat);
@@ -558,45 +775,92 @@ function fire(h, t) {
       const d = r.dummy;
       gore.spray(hitPt, dirV, 9, 6, 0.35);
       gore.spray(hitPt, tv.copy(dirV).negate(), 4, 2, 0.6);
-      d.hit(r.bone, def.dmg, tv.copy(dirV).multiplyScalar(def.push), hitPt, { explode: t.kind === 'shotgun' || Math.random() < 0.35 });
+      if (d.alive && Math.random() < 0.5) sfx.grunt();
+      d.hit(r.bone, def.dmg, tv.copy(dirV).multiplyScalar(def.push), hitPt, { explode: def.gib || Math.random() < 0.35 });
       hitsPer.set(d, (hitsPer.get(d) || 0) + 1);
     } else if (r.kind === 'wall') gore.sparks(hitPt, 3);
     else if (r.kind === 'panel') press(r.index);
     else if (r.kind === 'barrel') { gore.sparks(hitPt, 6); if (--r.barrel.hp <= 0) explode(r.barrel); }
+    else if (r.kind === 'grenade') r.grenade.fuse = 0.02;
     else if (r.kind === 'ball') r.ball.p.push(tv.copy(dirV).multiplyScalar(6), world.dt);
   }
   if (hitsPer.size) sfx.squish();
-  for (const [d, n] of hitsPer) if (n >= 4) d.knockdown(2.5 + Math.random());
+  for (const [d, n] of hitsPer) if (n >= 4 || def.dmg >= 3) d.knockdown(2.5 + Math.random());
 }
 
-// machete: sever whatever the blade sweeps through fast enough
-const bladeA = new V3();
-function slice(h, t, dt) {
-  bladeA.copy(t.a.pos).lerp(t.b.pos, 0.2);
+// Blades and bats. A fast sideways sweep slashes (or bashes); a thrust along
+// the blade stabs, and the blade stays stuck in whatever it went into.
+const bladeA = new V3(), bladeDir = new V3(), tipVel = new V3();
+const qInv = new THREE.Quaternion();
+function melee(h, t, dt) {
+  const def = t.def;
+  bladeA.copy(t.a.pos).lerp(t.b.pos, def.blade);
   h.tip.copy(t.b.pos);
   if (!h.hasTip) { h.prevTip.copy(h.tip); h.hasTip = true; return; }
-  const speed = h.tip.distanceTo(h.prevTip) / Math.max(dt, 1e-4);
-  if (speed > 2.8 && speed < 80) {
+  tipVel.subVectors(h.tip, h.prevTip).divideScalar(Math.max(dt, 1e-4));
+  const speed = tipVel.length();
+  bladeDir.subVectors(t.b.pos, t.a.pos).normalize();
+  const thrust = tipVel.dot(bladeDir);
+  if (speed > 1.4 && speed < 80) {
     for (const d of dummies) {
       if (d.sliceCd > 0) continue;
-      let hit;
+      let hit = null, torso = false;
       for (const b of d.bones) {
-        if (b.name === 'head' ? d.headGone : false) continue;
-        const pa = b.name === 'head' ? b.b.pos : b.a.pos, r = (b.name === 'head' ? 0.12 : b.r) + 0.04;
+        const head = b.name === 'head';
+        if (head && d.headGone) continue;
+        const pa = head ? b.b.pos : b.a.pos, r = (head ? 0.12 : b.r) + 0.04;
         if (segSeg(bladeA, h.tip, pa, b.b.pos) < r * r || segSeg(h.prevTip, h.tip, pa, b.b.pos) < r * r) { hit = b; break; }
       }
-      let torso = false;
       if (!hit && (segSeg(bladeA, h.tip, d.p.pelvis.pos, d.p.neck.pos) < 0.2 * 0.2 || segSeg(h.prevTip, h.tip, d.p.pelvis.pos, d.p.neck.pos) < 0.2 * 0.2)) torso = true;
       if (!hit && !torso) continue;
-      d.sliceCd = 0.2;
-      tv.subVectors(h.tip, h.prevTip).normalize();
-      const at = hit ? hit.b.pos : d.p.chest.pos;
-      gore.spray(at, tv, 16, 4, 0.6);
-      d.hit(hit ?? null, hit ? 4 : 3, tv2.copy(tv).multiplyScalar(2.5), at);
-      sfx.slice(); pulse(h, 0.9, 60); bloody(h, 0.15);
+      const stab = !def.blunt && thrust > 1.4 && thrust > speed * 0.7;
+      if (!stab && speed < 2.8) continue;
+      d.sliceCd = 0.25;
+      tv.copy(tipVel).normalize();
+      const at = hit ? (hit.name === 'head' ? hit.b.pos : tv3.addVectors(hit.a.pos, hit.b.pos).multiplyScalar(0.5)) : h.tip;
+      if (d.alive) sfx.grunt();
+      bloody(h, 0.15); pulse(h, 1, 70);
+      if (stab) {
+        gore.spray(h.tip, tv2.copy(bladeDir).negate(), 14, 3, 0.7);
+        d.stab(hit, tv2.copy(bladeDir).multiplyScalar(2));
+        sfx.squish();
+        stickTool(t, d, hit ? (hit.name === 'head' ? d.headMesh : hit.mesh) : d.torsoMesh, h);
+        return;
+      }
+      if (def.blunt) {
+        if (speed > 4) gore.spray(at, tv, 8, 3, 0.7);
+        d.hit(hit, def.dmg, tv2.copy(tv).multiplyScalar(Math.min(12, speed * 1.6)), at);
+        d.hp -= 20; if (d.hp <= 0) d.die();
+        if (speed > 3.6) d.knockdown(2.5 + Math.random());
+        sfx.thud();
+      } else {
+        gore.spray(at, tv, 16, 4, 0.6);
+        d.hit(hit, hit ? def.dmg : 3, tv2.copy(tv).multiplyScalar(2.5), at);
+        sfx.slice();
+      }
     }
   }
   h.prevTip.copy(h.tip);
+}
+
+// leave tool t embedded in a dummy's body part (mesh) and take it out of the hand
+function stickTool(t, d, mesh, h) {
+  const pos = tv.copy(t.a.pos).addScaledVector(bladeDir, 0.08);
+  qInv.copy(mesh.quaternion).invert();
+  t.stuck = { d, mesh, lp: pos.clone().sub(mesh.position).applyQuaternion(qInv), lq: qInv.clone().multiply(t.mesh.quaternion) };
+  h.held = null; t.held = null; h.hasTip = false;
+  gore.emitter(t.b, 4, 22);
+}
+function updateStuck(t) {
+  const st = t.stuck;
+  if (st.d.gone || (st.mesh === st.d.headMesh && st.d.headGone)) {
+    t.stuck = null; t.a.pinned = t.b.pinned = false;
+    return;
+  }
+  t.mesh.quaternion.copy(st.mesh.quaternion).multiply(st.lq);
+  t.mesh.position.copy(st.lp).applyQuaternion(st.mesh.quaternion).add(st.mesh.position);
+  t.a.pos.copy(t.mesh.position); t.b.pos.copy(NEG_Z).applyQuaternion(t.mesh.quaternion).multiplyScalar(t.def.len).add(t.a.pos);
+  t.a.prev.copy(t.a.pos); t.b.prev.copy(t.b.pos);
 }
 
 // fists (and open hands) shove particles around
@@ -663,7 +927,14 @@ function vrMove(dt) {
     if (!gp) continue;
     const ax = gp.axes.length >= 4 ? gp.axes[2] : gp.axes[0] || 0, ay = gp.axes.length >= 4 ? gp.axes[3] : gp.axes[1] || 0;
     const left = h.src.handedness === 'left';
-    if (left) {
+    if (h.held?.tool?.def.spawner) {
+      h.navCd = (h.navCd ?? 0) - dt;
+      if (Math.abs(ax) < 0.4 && Math.abs(ay) < 0.4) h.navCd = 0;
+      else if (h.navCd <= 0) {
+        if (Math.abs(ay) > 0.6) { menuMove(0, Math.sign(ay)); h.navCd = 0.22; }
+        else if (Math.abs(ax) > 0.6) { menuMove(Math.sign(ax), 0); h.navCd = 0.35; }
+      }
+    } else if (left) {
       if (Math.hypot(ax, ay) > 0.15) {
         camera.getWorldDirection(tv); tv.y = 0; tv.normalize();
         rig.position.x += (tv.x * -ay - tv.z * ax) * 2.6 * dt;
@@ -692,6 +963,9 @@ addEventListener('keydown', e => {
   const map = { Digit1: 0, Digit2: 2, Digit5: 1, KeyC: 3, KeyH: 4, KeyT: 5, KeyG: 6, KeyR: 7 };
   if (e.code in map) { panelCd = 0; press(map[e.code]); }
   if (e.code === 'KeyE') desk.held ? drop(desk) : grab(desk);
+  if (e.code === 'KeyQ' || e.code === 'Tab') { e.preventDefault(); menuMove(e.shiftKey ? -1 : 1, 0); }
+  if (e.code === 'KeyZ') menuMove(0, -1);
+  if (e.code === 'KeyX') menuMove(0, 1);
   if (e.code === 'KeyF') { freecam = !freecam; $('free').hidden = !freecam; }
   if (e.code === 'Space' && !freecam) e.preventDefault();
 });
@@ -721,6 +995,7 @@ addEventListener('mousemove', e => {
   yaw -= e.movementX * 0.0024; pitch -= e.movementY * 0.0024;
 });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
+addEventListener('wheel', e => { if (started && !inVR && desk.held?.tool?.def.spawner) menuMove(0, Math.sign(e.deltaY)); });
 document.addEventListener('pointerlockchange', () => { locked = document.pointerLockElement === canvas; });
 document.addEventListener('pointerlockerror', () => { noLock = true; });
 
@@ -778,7 +1053,10 @@ renderer.setAnimationLoop(time => {
     if (inVR) vrMove(dt); else desktopMove(dt);
     rig.updateMatrixWorld(true);
     panelCd -= dt;
+    spawnDotOn = false;
     for (const h of hands()) updateHand(h, dt);
+    spawnDot.visible = spawnDotOn;
+    $('spawnHud').hidden = !(spawnDotOn && !inVR);
     // touching a panel button with a hand presses it
     if (inVR) for (const h of vrHands) {
       const i = h.active && h.pos.x > PANEL.x - 0.1 ? panelIndex(h.pos.y, h.pos.z) : -1;
@@ -791,7 +1069,7 @@ renderer.setAnimationLoop(time => {
     acc += dt;
     let n = 0;
     while (acc >= TICK && n < 4) {
-      for (const d of dummies) d.tick(world.dt, head, S.hostile);
+      for (const d of dummies) d.tick(world.dt, head, S.hostile || d.aggro);
       world.step();
       pushHands();
       gore.update(world.dt);
@@ -802,6 +1080,7 @@ renderer.setAnimationLoop(time => {
     for (const d of dummies) d.sync();
     for (const t of tools) {
       if (t.flashT > 0 && (t.flashT -= dt) <= 0) t.flash.visible = false;
+      if (t.stuck) { updateStuck(t); continue; }
       if (t.held) continue;
       t.mesh.position.copy(t.a.pos);
       t.mesh.quaternion.setFromUnitVectors(NEG_Z, tv.subVectors(t.b.pos, t.a.pos).normalize());
@@ -811,11 +1090,12 @@ renderer.setAnimationLoop(time => {
       b.mesh.quaternion.setFromUnitVectors(UP, tv.subVectors(b.b.pos, b.a.pos).normalize());
     }
     for (const b of balls) b.mesh.position.copy(b.p.pos);
+    updateExplosives(dt * world.scale);
     gore.sync(time);
     for (const tr of tracers) if (tr.m.visible) { tr.t -= dt; tr.m.material.opacity = Math.max(0, tr.t / 0.07); if (tr.t <= 0) tr.m.visible = false; }
     for (let i = explosions.length - 1; i >= 0; i--) {
       const e = explosions[i]; e.t += dt;
-      e.mesh.scale.setScalar(0.3 + e.t * 16); e.mesh.material.opacity = Math.max(0, 0.9 - e.t * 3.2);
+      e.mesh.scale.setScalar((0.3 + e.t * 16) * (e.size ?? 1)); e.mesh.material.opacity = Math.max(0, 0.9 - e.t * 3.2);
       if (e.t > 0.3) { scene.remove(e.mesh); e.mesh.material.dispose(); explosions.splice(i, 1); }
     }
   }
@@ -823,5 +1103,5 @@ renderer.setAnimationLoop(time => {
 });
 
 // for poking at things from the console
-window.lab = { world, dummies, tools, barrels, balls, S, gore, desk, rig, camera, press, grab, drop, spawnDummy, spawnBarrel,
+window.lab = { world, dummies, tools, barrels, balls, grenades, mines, rockets, menu, menuMove, S, gore, desk, rig, camera, press, grab, drop, spawnDummy, spawnBarrel,
   look(y, p) { yaw = y; pitch = p; }, get state() { return { started, inVR, freecam, locked, noLock }; } };

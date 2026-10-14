@@ -35,6 +35,9 @@ export const sfx = {
   init() { ctx(); },
   shot(kind) {
     if (kind === 'shotgun') { noise(0.35, 0.9, 2600, 'lowpass', 300); tone('sine', 140, 40, 0.3, 0.9); }
+    else if (kind === 'revolver') { noise(0.25, 0.8, 3000, 'lowpass', 400); tone('sine', 170, 45, 0.22, 0.8); }
+    else if (kind === 'rifle') { noise(0.12, 0.6, 3800, 'lowpass', 700); tone('square', 190, 70, 0.09, 0.3); }
+    else if (kind === 'rocket') { noise(0.7, 0.7, 500, 'bandpass', 2500); tone('sawtooth', 90, 300, 0.5, 0.2); }
     else if (kind === 'smg') { noise(0.09, 0.45, 4200, 'lowpass', 900); tone('square', 260, 90, 0.07, 0.25); }
     else { noise(0.14, 0.6, 3600, 'lowpass', 600); tone('sine', 200, 60, 0.12, 0.6); }
   },
@@ -43,5 +46,8 @@ export const sfx = {
   thud() { tone('sine', 110, 45, 0.14, 0.7); noise(0.06, 0.3, 500); },
   slice() { noise(0.14, 0.4, 5000, 'bandpass', 1200); noise(0.2, 0.4, 800, 'lowpass', 150); },
   boom() { noise(0.9, 1.0, 1800, 'lowpass', 60); tone('sine', 90, 25, 0.8, 1.0); },
+  grunt() { const f = 150 + Math.random() * 90; tone('sawtooth', f, f * 0.55, 0.22, 0.22); noise(0.18, 0.12, 900, 'bandpass', 500); },
+  spawn() { tone('sine', 400, 1200, 0.12, 0.25); tone('triangle', 800, 1600, 0.1, 0.12); },
+  tick() { tone('square', 1100, 1100, 0.03, 0.08); },
   beep() { tone('square', 660, 880, 0.08, 0.15); },
 };
