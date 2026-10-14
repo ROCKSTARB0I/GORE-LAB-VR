@@ -1,8 +1,8 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=20';
-import { Dummy } from './ragdoll.js?v=20';
-import { Gore } from './gore.js?v=20';
-import { sfx, music } from './audio.js?v=20';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=21';
+import { Dummy } from './ragdoll.js?v=21';
+import { Gore } from './gore.js?v=21';
+import { sfx, music } from './audio.js?v=21';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -1169,7 +1169,15 @@ const avatar = (() => {
   const g = new THREE.Group(); g.visible = false; scene.add(g);
   const shirt = new THREE.MeshLambertMaterial({ color: 0x3a3f47 }), pants = new THREE.MeshLambertMaterial({ color: 0x252a36 }), boot = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
   const limb = (r, m) => { const x = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 0.85, 1, 10), m); g.add(x); return x; };
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.48, 0.15), shirt), hips = new THREE.Mesh(new THREE.BoxGeometry(0.29, 0.15, 0.15), pants);
+  // a shaped torso: broad, rounded chest tapering to the waist, with shoulders
+  const torso = new THREE.Group();
+  const part = (geo, mat, x, y, z, sx, sy, sz) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.scale.set(sx, sy, sz); torso.add(m); return m; };
+  part(new THREE.CapsuleGeometry(0.12, 0.12, 6, 16), shirt, 0, 0.09, 0, 1.3, 1, 0.68);      // ribcage
+  part(new THREE.CapsuleGeometry(0.105, 0.1, 6, 16), shirt, 0, -0.12, 0.004, 1.15, 1, 0.66);  // belly and waist
+  part(new THREE.SphereGeometry(0.055, 12, 10), shirt, -0.152, 0.2, 0, 1, 0.9, 1);           // shoulders
+  part(new THREE.SphereGeometry(0.055, 12, 10), shirt, 0.152, 0.2, 0, 1, 0.9, 1);
+  part(new THREE.CylinderGeometry(0.15, 0.13, 0.04, 16), shirt, 0, 0.215, 0, 1, 1, 0.6);   // across the collarbones
+  const hips = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 12), pants); hips.scale.set(1.5, 0.95, 0.85);   // rounded hips
   g.add(torso, hips);
   const feet = [0, 1].map(() => { const f = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.26), boot); g.add(f); return f; });
   const wrists = [0, 1].map(() => { const w = new THREE.Mesh(new THREE.SphereGeometry(0.031, 10, 8), skinMat); g.add(w); return w; });
