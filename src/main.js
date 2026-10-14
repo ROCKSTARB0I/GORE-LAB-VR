@@ -1,8 +1,8 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=21';
-import { Dummy } from './ragdoll.js?v=21';
-import { Gore } from './gore.js?v=21';
-import { sfx, music } from './audio.js?v=21';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=22';
+import { Dummy, faceTex } from './ragdoll.js?v=22';
+import { Gore } from './gore.js?v=22';
+import { sfx, music } from './audio.js?v=22';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -105,6 +105,7 @@ const MAPS = {
       addWalls(g, WALL_H, new THREE.MeshLambertMaterial({ map: wallTex }), new THREE.MeshBasicMaterial({ color: 0xe8792b }));
       const ceil = new THREE.Mesh(new THREE.PlaneGeometry(HALF * 2, HALF * 2), new THREE.MeshLambertMaterial({ color: 0x8d939c }));
       ceil.rotation.x = Math.PI / 2; ceil.position.y = WALL_H; g.add(ceil);
+      addMirror(g, -HALF + 0.03, 1.5, -1.4, 3.0, 2.2);
       const lampMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
       for (const x of [-4, 4]) for (const z of [-4, 4]) {
         const lamp = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.05, 0.5), lampMat);
@@ -334,6 +335,67 @@ const MAPS = {
 };
 const MAP_KEYS = Object.keys(MAPS);
 let mapGroup = null;
+
+// ---------------------------------------------------------------- mirror
+// A wall mirror: each frame the scene is drawn from the camera reflected in the
+// mirror's plane into a texture, which the mirror shows. Layer 5 holds things only
+// the mirror sees (your own head); layer 6 things only your eyes see (screen overlays).
+const MIRROR_ONLY = 5, EYES_ONLY = 6;
+let mirror = null;
+function addMirror(g, x, y, z, w, h) {
+  const rt = new THREE.WebGLRenderTarget(768, 576);
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { tDiffuse: { value: rt.texture }, textureMatrix: { value: new THREE.Matrix4() }, tint: { value: new THREE.Color(0xe8eef4) } },
+    vertexShader: 'uniform mat4 textureMatrix; varying vec4 vUv; void main() { vUv = textureMatrix * modelMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: 'uniform sampler2D tDiffuse; uniform vec3 tint; varying vec4 vUv; void main() { vec4 c = texture2DProj(tDiffuse, vUv); gl_FragColor = vec4(c.rgb * tint, 1.0); #include <colorspace_fragment> }',
+  });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+  mesh.position.set(x, y, z); mesh.rotation.y = Math.PI / 2; g.add(mesh);
+  const frameMat = new THREE.MeshLambertMaterial({ color: 0x2a2e35 });
+  for (const [fw, fh, fy, fz] of [[w + 0.12, 0.06, h / 2 + 0.03, 0], [w + 0.12, 0.06, -h / 2 - 0.03, 0], [0.06, h, 0, w / 2 + 0.03], [0.06, h, 0, -w / 2 - 0.03]]) {
+    const f = new THREE.Mesh(new THREE.BoxGeometry(0.04, fh, fw === 0.06 ? 0.06 : fw), frameMat);
+    f.position.set(x + 0.01, y + fy, z + fz); g.add(f);
+  }
+  const cam = new THREE.PerspectiveCamera(); cam.layers.enable(MIRROR_ONLY); cam.layers.disable(EYES_ONLY);
+  mirror = { mesh, rt, cam, mat };
+}
+const mv = { p: new V3(), c: new V3(), n: new V3(), view: new V3(), look: new V3(), target: new V3(), rot: new THREE.Matrix4(), plane: new THREE.Plane(), clip: new THREE.Vector4(), q: new THREE.Vector4() };
+function renderMirror() {
+  const { mesh, cam, rt, mat } = mirror;
+  mesh.updateMatrixWorld();
+  mv.p.setFromMatrixPosition(mesh.matrixWorld); mv.c.setFromMatrixPosition(camera.matrixWorld);
+  mv.rot.extractRotation(mesh.matrixWorld); mv.n.set(0, 0, 1).applyMatrix4(mv.rot);
+  mv.view.subVectors(mv.p, mv.c);
+  if (mv.view.dot(mv.n) > 0 || mv.view.length() > 14) return;   // behind it, or too far to matter
+  mv.view.reflect(mv.n).negate().add(mv.p);
+  mv.rot.extractRotation(camera.matrixWorld);
+  mv.look.set(0, 0, -1).applyMatrix4(mv.rot).add(mv.c);
+  mv.target.subVectors(mv.p, mv.look).reflect(mv.n).negate().add(mv.p);
+  cam.position.copy(mv.view); cam.up.set(0, 1, 0).applyMatrix4(mv.rot).reflect(mv.n); cam.lookAt(mv.target);
+  cam.far = camera.far; cam.updateMatrixWorld(); cam.projectionMatrix.copy(camera.projectionMatrix);
+  const tm = mat.uniforms.textureMatrix.value;
+  tm.set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1).multiply(cam.projectionMatrix).multiply(cam.matrixWorldInverse);
+  // clip away anything behind the mirror (oblique near plane)
+  mv.plane.setFromNormalAndCoplanarPoint(mv.n, mv.p).applyMatrix4(cam.matrixWorldInverse);
+  mv.clip.set(mv.plane.normal.x, mv.plane.normal.y, mv.plane.normal.z, mv.plane.constant);
+  const e = cam.projectionMatrix.elements;
+  mv.q.set((Math.sign(mv.clip.x) + e[8]) / e[0], (Math.sign(mv.clip.y) + e[9]) / e[5], -1, (1 + e[10]) / e[14]);
+  mv.clip.multiplyScalar(2 / mv.clip.dot(mv.q));
+  e[2] = mv.clip.x; e[6] = mv.clip.y; e[10] = mv.clip.z + 1; e[14] = mv.clip.w;
+  // your own head, for the mirror only
+  selfHead.position.copy(mv.c); selfHead.quaternion.copy(camera.getWorldQuaternion(tq)).multiply(flipY);
+  mesh.visible = false; selfHead.visible = true;
+  const xr = renderer.xr.enabled, prev = renderer.getRenderTarget();
+  renderer.xr.enabled = false;
+  renderer.setRenderTarget(rt); renderer.clear(); renderer.render(scene, cam);
+  renderer.setRenderTarget(prev); renderer.xr.enabled = xr;
+  mesh.visible = true;
+}
+// your head as other people (and the mirror) see it
+const flipY = new THREE.Quaternion().setFromAxisAngle(new V3(0, 1, 0), Math.PI);
+const selfHead = new THREE.Mesh(new THREE.SphereGeometry(0.115, 18, 14), new THREE.MeshLambertMaterial({ map: faceTex(0xdcb58f, 0x2a1b10, 'neutral') }));
+selfHead.layers.set(MIRROR_ONLY); scene.add(selfHead);
+camera.layers.enable(EYES_ONLY);
 function setMap(key) {
   if (!MAPS[key]) key = 'lab';
   const def = MAPS[key];
@@ -344,6 +406,7 @@ function setMap(key) {
     scene.remove(mapGroup);
     mapGroup.traverse(o => { o.geometry?.dispose(); if (o.material) { o.material.map?.dispose(); o.material.dispose(); } });
   }
+  mirror = null;
   mapGroup = new THREE.Group();
   const boxes = [];
   def.build(mapGroup, boxes);
@@ -1920,14 +1983,14 @@ try { SV.best = +(localStorage.getItem('goreLabBest') || 0); } catch { /* privat
 // red wash over the view when hurt
 const hurtMesh = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 8),
   new THREE.MeshBasicMaterial({ color: 0xb00000, side: THREE.BackSide, transparent: true, opacity: 0, depthTest: false, depthWrite: false }));
-hurtMesh.renderOrder = 998; hurtMesh.visible = false; camera.add(hurtMesh);
+hurtMesh.renderOrder = 998; hurtMesh.visible = false; hurtMesh.layers.set(EYES_ONLY); camera.add(hurtMesh);
 
 // big text that floats in front of you: wave numbers, deaths
 const bannerCanvas = document.createElement('canvas'); bannerCanvas.width = 1024; bannerCanvas.height = 320;
 const bannerTex = new THREE.CanvasTexture(bannerCanvas); bannerTex.colorSpace = THREE.SRGBColorSpace;
 const bannerMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 0.6),
   new THREE.MeshBasicMaterial({ map: bannerTex, transparent: true, depthTest: false, depthWrite: false }));
-bannerMesh.position.set(0, 0.28, -2.2); bannerMesh.renderOrder = 999; bannerMesh.visible = false; camera.add(bannerMesh);
+bannerMesh.position.set(0, 0.28, -2.2); bannerMesh.renderOrder = 999; bannerMesh.visible = false; bannerMesh.layers.set(EYES_ONLY); camera.add(bannerMesh);
 let bannerT = 0;
 function banner(text, sub = '', secs = 2.5) {
   const g = bannerCanvas.getContext('2d');
@@ -2779,10 +2842,11 @@ function frame(time) {
       if (e.t > 0.3) { scene.remove(e.mesh); e.mesh.material.dispose(); explosions.splice(i, 1); }
     }
   }
+  if (mirror && started) renderMirror();
   renderer.render(scene, camera);
 }
 renderer.setAnimationLoop(frame);
 
 // for poking at things from the console
-window.lab = { step(ms = 16.7, n = 1) { for (let i = 0; i < n; i++) frame(last + ms); }, snap() { frame(last + 16.7); return renderer.domElement.toDataURL('image/jpeg', 0.6); }, makeTool, setGore, bolts, holsters, jump, HELP, UI, UI_ROWS, MAPS, setMap, setTrack, setHeight, openMenu, closeMenu, menuActivate, music, get paused() { return paused; }, P, SV, damagePlayer, startSurvival, world, dummies, tools, barrels, balls, grenades, mines, rockets, menu, menuMove, S, gore, desk, rig, camera, press, grab, drop, spawnDummy, spawnBarrel,
+window.lab = { get mirror() { return mirror; }, renderer, step(ms = 16.7, n = 1) { for (let i = 0; i < n; i++) frame(last + ms); }, snap() { frame(last + 16.7); return renderer.domElement.toDataURL('image/jpeg', 0.6); }, makeTool, setGore, bolts, holsters, jump, HELP, UI, UI_ROWS, MAPS, setMap, setTrack, setHeight, openMenu, closeMenu, menuActivate, music, get paused() { return paused; }, P, SV, damagePlayer, startSurvival, world, dummies, tools, barrels, balls, grenades, mines, rockets, menu, menuMove, S, gore, desk, rig, camera, press, grab, drop, spawnDummy, spawnBarrel,
   look(y, p) { yaw = y; pitch = p; }, get state() { return { started, inVR, freecam, locked, noLock }; } };

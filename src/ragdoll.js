@@ -2,7 +2,7 @@
 // walking pose while alive ("active ragdoll"), goes limp when dead, and can
 // lose its head and limbs.
 import * as THREE from '../vendor/three.module.js';
-import { Particle, HALF, segSeg } from './physics.js?v=21';
+import { Particle, HALF, segSeg } from './physics.js?v=22';
 
 // rest pose, facing +Z
 const REST = {
@@ -54,7 +54,7 @@ const HAIR = [0x2a1b10, 0x5a3a1a, 0xc9a24a, 0x1a1a1a, 0x8a3b1e, 0x6b6b6b];
 const css = hex => '#' + hex.toString(16).padStart(6, '0');
 const faceCache = {};
 // bruise: 0-3, how badly the face has been beaten (black eyes, cuts, swelling)
-function faceTex(skin, hair, expr, bruise = 0) {
+export function faceTex(skin, hair, expr, bruise = 0) {
   const key = skin + '_' + hair + '_' + expr + '_' + bruise;
   if (faceCache[key]) return faceCache[key];
   const c = document.createElement('canvas'); c.width = 256; c.height = 128;
