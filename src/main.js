@@ -1,8 +1,8 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=16';
-import { Dummy } from './ragdoll.js?v=16';
-import { Gore } from './gore.js?v=16';
-import { sfx, music } from './audio.js?v=16';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=17';
+import { Dummy } from './ragdoll.js?v=17';
+import { Gore } from './gore.js?v=17';
+import { sfx, music } from './audio.js?v=17';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -71,6 +71,23 @@ function addBlock(g, boxes, mat, x, y, z, w, h, d) {
   boxes.push({ min: new V3(x - w / 2, y, z - d / 2), max: new V3(x + w / 2, y + h, z + d / 2) });
 }
 
+function addSky(g, night) {
+  if (night) {
+    const starPos = [];
+    for (let i = 0; i < 600; i++) { const a = Math.random() * Math.PI * 2, e = 0.12 + Math.random() * 1.4; starPos.push(Math.cos(a) * Math.cos(e) * 90, Math.sin(e) * 90, Math.sin(a) * Math.cos(e) * 90); }
+    const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(starPos, 3));
+    g.add(new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xffffff, size: 0.5, sizeAttenuation: true, fog: false })));
+    const moon = new THREE.Mesh(new THREE.SphereGeometry(4, 20, 14), new THREE.MeshBasicMaterial({ color: 0xf2f0e0, fog: false }));
+    moon.position.set(-35, 55, -55); g.add(moon);
+    const cloud = new THREE.MeshBasicMaterial({ color: 0x1c2232, fog: false });
+    for (let i = 0; i < 6; i++) { const c = new THREE.Mesh(new THREE.SphereGeometry(6 + Math.random() * 5, 10, 8), cloud); c.scale.y = 0.3; c.position.set((Math.random() - 0.5) * 140, 34 + Math.random() * 10, (Math.random() - 0.5) * 140); g.add(c); }
+  } else {
+    const cloud = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
+    for (let i = 0; i < 9; i++) { const c = new THREE.Mesh(new THREE.SphereGeometry(6 + Math.random() * 5, 10, 8), cloud); c.scale.y = 0.3; c.position.set((Math.random() - 0.5) * 140, 32 + Math.random() * 12, (Math.random() - 0.5) * 140); g.add(c); }
+    const sunBall = new THREE.Mesh(new THREE.SphereGeometry(5, 16, 12), new THREE.MeshBasicMaterial({ color: 0xfff6c0, fog: false }));
+    sunBall.position.set(40, 70, 30); g.add(sunBall);
+  }
+}
 const MAPS = {
   lab: {
     name: 'Lab', bg: 0x20242b, hemi: [0xffffff, 0x8a8f99, 2.4], sun: [0xffffff, 1.4], wallH: WALL_H,
@@ -129,7 +146,7 @@ const MAPS = {
   },
   rooftop: {
     name: 'Rooftop', bg: 0x070914, hemi: [0x9fb0ff, 0x1c1e2c, 1.25], sun: [0xbfd0ff, 0.9], wallH: 1.1,
-    build(g, boxes) {
+    build(g, boxes, day = false) {
       addFloor(g, new THREE.MeshLambertMaterial({ map: tiled(noiseTex('#3a3d44', 30), HALF / 2, HALF / 2) }));
       addWalls(g, 1.1, new THREE.MeshLambertMaterial({ color: 0x70747c }), new THREE.MeshBasicMaterial({ color: 0xff3df2 }));
       const cap = new THREE.MeshLambertMaterial({ color: 0x8a8f98 });
@@ -138,24 +155,34 @@ const MAPS = {
         m.position.set(-Math.sin(a) * (HALF + 0.1), 1.12, -Math.cos(a) * (HALF + 0.1)); m.rotation.y = a; g.add(m);
       }
       // city around and below
-      const winTex = canvasTex(64, 128, (c, w, h) => {
-        c.fillStyle = '#0b0d16'; c.fillRect(0, 0, w, h);
-        for (let y = 4; y < h; y += 8) for (let x = 4; x < w; x += 8) if (Math.random() < 0.4) { c.fillStyle = Math.random() < 0.8 ? '#ffd98a' : '#8ad1ff'; c.fillRect(x, y, 4, 5); }
-      });
-      const tower = new THREE.MeshBasicMaterial({ map: winTex });
+      const winTex = day
+        // by day: concrete and glass, windows catching the sky
+        ? canvasTex(64, 128, (c, w, h) => {
+          c.fillStyle = ['#8a929c', '#9c958a', '#7a8592'][Math.floor(Math.random() * 3)]; c.fillRect(0, 0, w, h);
+          for (let y = 4; y < h; y += 8) for (let x = 4; x < w; x += 8) { c.fillStyle = Math.random() < 0.7 ? '#a9c4dc' : '#5b6b7c'; c.fillRect(x, y, 4, 5); }
+        })
+        : canvasTex(64, 128, (c, w, h) => {
+          c.fillStyle = '#0b0d16'; c.fillRect(0, 0, w, h);
+          for (let y = 4; y < h; y += 8) for (let x = 4; x < w; x += 8) if (Math.random() < 0.4) { c.fillStyle = Math.random() < 0.8 ? '#ffd98a' : '#8ad1ff'; c.fillRect(x, y, 4, 5); }
+        });
+      const tower = day ? new THREE.MeshLambertMaterial({ map: winTex }) : new THREE.MeshBasicMaterial({ map: winTex });
       for (let i = 0; i < 34; i++) {
         const a = i / 34 * Math.PI * 2 + Math.random() * 0.1, r = 22 + Math.random() * 30, w = 5 + Math.random() * 7, top = -8 + Math.random() * 30;
         const m = new THREE.Mesh(new THREE.BoxGeometry(w, 60, w), tower);
         m.position.set(Math.sin(a) * r, top - 30, Math.cos(a) * r); g.add(m);
       }
-      const street = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshBasicMaterial({ color: 0x05060c }));
+      const street = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshBasicMaterial({ color: day ? 0x4a4e55 : 0x05060c }));
       street.rotation.x = -Math.PI / 2; street.position.y = -40; g.add(street);
+      if (day) {
+        addSky(g, false);
+      } else {
       const starPos = [];
       for (let i = 0; i < 500; i++) { const a = Math.random() * Math.PI * 2, e = 0.15 + Math.random() * 1.35; starPos.push(Math.cos(a) * Math.cos(e) * 90, Math.sin(e) * 90, Math.sin(a) * Math.cos(e) * 90); }
       const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(starPos, 3));
       g.add(new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xffffff, size: 0.5, sizeAttenuation: true })));
       const moon = new THREE.Mesh(new THREE.SphereGeometry(4, 20, 14), new THREE.MeshBasicMaterial({ color: 0xf2f0e0 }));
       moon.position.set(30, 55, -60); g.add(moon);
+      }
       const metal = new THREE.MeshLambertMaterial({ color: 0x9aa2ab });
       addBlock(g, boxes, metal, 4.5, 0, -4.5, 1.8, 1.2, 1.2);
       addBlock(g, boxes, metal, -5.5, 0, 4.5, 1.2, 1.4, 1.8);
@@ -164,7 +191,7 @@ const MAPS = {
   },
   backyard: {
     name: 'Backyard', bg: 0x8ec9f0, hemi: [0xffffff, 0x7fa860, 2.3], sun: [0xfff3d0, 1.9], wallH: 1.8,
-    build(g, boxes) {
+    build(g, boxes, night = false) {
       addFloor(g, new THREE.MeshLambertMaterial({ map: tiled(noiseTex('#5f9a45', 34), HALF, HALF) }));
       const fence = tiled(canvasTex(128, 128, (c, w, h) => {
         for (let x = 0; x < w; x += 32) { c.fillStyle = x % 64 ? '#a9773f' : '#b98448'; c.fillRect(x, 0, 30, h); c.fillStyle = '#6b4a25'; c.fillRect(x + 30, 0, 2, h); }
@@ -179,16 +206,27 @@ const MAPS = {
         const t = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.35, hgt, 8), trunk); t.position.set(Math.sin(a) * r, hgt / 2, Math.cos(a) * r); g.add(t);
         const l = new THREE.Mesh(new THREE.IcosahedronGeometry(1.8 + Math.random() * 1.2, 1), leaf); l.position.set(Math.sin(a) * r, hgt + 1.2, Math.cos(a) * r); g.add(l);
       }
-      const cloud = new THREE.MeshBasicMaterial({ color: 0xffffff });
-      for (let i = 0; i < 9; i++) {
-        const c = new THREE.Mesh(new THREE.SphereGeometry(6 + Math.random() * 5, 10, 8), cloud);
-        c.scale.y = 0.3; c.position.set((Math.random() - 0.5) * 140, 32 + Math.random() * 12, (Math.random() - 0.5) * 140); g.add(c);
+      addSky(g, night);
+      if (night) {
+        // a porch light on the shed and a few fireflies over the grass
+        const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffd48a }));
+        bulb.position.set(4.4, 2.1, -5.8); g.add(bulb);
+        const glow = new THREE.Mesh(new THREE.SphereGeometry(0.5, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffb050, transparent: true, opacity: 0.18, depthWrite: false }));
+        glow.position.copy(bulb.position); g.add(glow);
+        const flyMat = new THREE.MeshBasicMaterial({ color: 0xd8ff7a });
+        for (let i = 0; i < 24; i++) { const f = new THREE.Mesh(new THREE.SphereGeometry(0.02, 5, 4), flyMat); f.position.set((Math.random() - 0.5) * 14, 0.4 + Math.random() * 1.6, (Math.random() - 0.5) * 14); g.add(f); }
       }
-      const sunBall = new THREE.Mesh(new THREE.SphereGeometry(5, 16, 12), new THREE.MeshBasicMaterial({ color: 0xfff6c0 }));
-      sunBall.position.set(40, 70, 30); g.add(sunBall);
       addBlock(g, boxes, new THREE.MeshLambertMaterial({ color: 0x9c4a2e }), 5.8, 0, -5.8, 2.6, 2.3, 2.6);   // shed
       addBlock(g, boxes, new THREE.MeshLambertMaterial({ color: 0xd8d2c4 }), -5.5, 0, 5.5, 2.0, 0.45, 1.0);  // bench
     },
+  },
+  backyardNight: {
+    name: 'Backyard (Night)', short: 'Yard Night', bg: 0x0a0f1e, fog: [0x0a0f1e, 18, 80], hemi: [0x6a7cb0, 0x10180e, 0.95], sun: [0xa8b8ff, 0.55], wallH: 1.8,
+    build(g, boxes) { MAPS.backyard.build(g, boxes, true); },
+  },
+  rooftopDay: {
+    name: 'Rooftop (Day)', short: 'Roof Day', bg: 0x9cc8ea, fog: [0x9cc8ea, 60, 160], hemi: [0xffffff, 0x8a8f98, 2.2], sun: [0xfff3d8, 1.8], wallH: 1.1,
+    build(g, boxes) { MAPS.rooftop.build(g, boxes, true); },
   },
   town: {
     name: 'Abandoned Town', short: 'Town', half: 22, bg: 0x6b5f55, fog: [0x6b5f55, 16, 75], hemi: [0xe0cdb0, 0x3a352e, 1.7], sun: [0xffc890, 1.2], wallH: 2.2,
@@ -2717,5 +2755,5 @@ function frame(time) {
 renderer.setAnimationLoop(frame);
 
 // for poking at things from the console
-window.lab = { step(ms = 16.7, n = 1) { for (let i = 0; i < n; i++) frame(last + ms); }, makeTool, setGore, bolts, holsters, jump, HELP, UI, UI_ROWS, MAPS, setMap, setTrack, setHeight, openMenu, closeMenu, menuActivate, music, get paused() { return paused; }, P, SV, damagePlayer, startSurvival, world, dummies, tools, barrels, balls, grenades, mines, rockets, menu, menuMove, S, gore, desk, rig, camera, press, grab, drop, spawnDummy, spawnBarrel,
+window.lab = { step(ms = 16.7, n = 1) { for (let i = 0; i < n; i++) frame(last + ms); }, snap() { frame(last + 16.7); return renderer.domElement.toDataURL('image/jpeg', 0.6); }, makeTool, setGore, bolts, holsters, jump, HELP, UI, UI_ROWS, MAPS, setMap, setTrack, setHeight, openMenu, closeMenu, menuActivate, music, get paused() { return paused; }, P, SV, damagePlayer, startSurvival, world, dummies, tools, barrels, balls, grenades, mines, rockets, menu, menuMove, S, gore, desk, rig, camera, press, grab, drop, spawnDummy, spawnBarrel,
   look(y, p) { yaw = y; pitch = p; }, get state() { return { started, inVR, freecam, locked, noLock }; } };
