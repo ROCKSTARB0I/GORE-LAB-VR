@@ -1,8 +1,8 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, WALL_H, TICK, segSeg } from './physics.js?v=7';
-import { Dummy } from './ragdoll.js?v=7';
-import { Gore } from './gore.js?v=7';
-import { sfx, music } from './audio.js?v=7';
+import { World, Particle, HALF, WALL_H, TICK, segSeg } from './physics.js?v=8';
+import { Dummy } from './ragdoll.js?v=8';
+import { Gore } from './gore.js?v=8';
+import { sfx, music } from './audio.js?v=8';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -408,12 +408,13 @@ const GUNS = {
   machete: { name: 'Machete', len: 0.66, melee: true, blade: 0.2, dmg: 4 },
   katana: { name: 'Katana', len: 0.98, melee: true, blade: 0.22, dmg: 6 },
   bat: { name: 'Baseball bat', len: 0.8, melee: true, blade: 0.3, dmg: 1, blunt: true },
+  chainsaw: { name: 'Chainsaw', len: 0.78, melee: true, saw: true, blade: 0.32, tiltVR: 0.3, tiltDesk: 0.15, thrust: true },
 };
 const DEFAULT_TOOLS = Object.keys(GUNS);
 const M = {
   dark: new THREE.MeshLambertMaterial({ color: 0x23262b }), grey: new THREE.MeshLambertMaterial({ color: 0x555b64 }),
   wood: new THREE.MeshLambertMaterial({ color: 0x7a4a26 }), steel: new THREE.MeshLambertMaterial({ color: 0xcfd6de }),
-  olive: new THREE.MeshLambertMaterial({ color: 0x4d5a3a }), white: new THREE.MeshLambertMaterial({ color: 0xdfe6ee }),
+  olive: new THREE.MeshLambertMaterial({ color: 0x4d5a3a }), orange: new THREE.MeshLambertMaterial({ color: 0xe8792b }), white: new THREE.MeshLambertMaterial({ color: 0xdfe6ee }),
   red: new THREE.MeshLambertMaterial({ color: 0xb3261e }), cyan: new THREE.MeshBasicMaterial({ color: 0x35e0ff }),
   flash: new THREE.MeshBasicMaterial({ color: 0xffe08a }),
 };
@@ -459,6 +460,10 @@ function buildToolMesh(kind) {
       box(g, M.steel, 0.005, 0.034, 0.78, 0, 0.004, -0.58); break;
     case 'bat':
       cyl(g, M.wood, 0.036, 0.017, 0.8, 0, 0, -0.38); cyl(g, M.dark, 0.022, 0.022, 0.03, 0, 0, 0.03); break;
+    case 'chainsaw':
+      box(g, M.orange, 0.11, 0.13, 0.26, 0, 0.02, -0.08); box(g, M.dark, 0.03, 0.03, 0.2, 0, 0.115, -0.1);
+      box(g, M.dark, 0.03, 0.09, 0.03, 0, 0.07, -0.19); box(g, M.dark, 0.04, 0.1, 0.05, 0, -0.03, 0.06, -0.2);
+      box(g, M.dark, 0.012, 0.092, 0.54, 0, 0.02, -0.5); box(g, M.steel, 0.016, 0.062, 0.5, 0, 0.02, -0.49); break;
     case 'spawngun': {
       box(g, M.white, 0.06, 0.08, 0.2, 0, 0.03, -0.09); box(g, M.dark, 0.034, 0.1, 0.045, 0, -0.045, 0.005, -0.22);
       cyl(g, M.cyan, 0.022, 0.032, 0.08, 0, 0.03, -0.22); box(g, M.dark, 0.062, 0.02, 0.12, 0, 0.075, -0.09);
@@ -492,7 +497,7 @@ function removeTool(t) {
 }
 function resetItems() {
   for (const t of [...tools]) removeTool(t);
-  DEFAULT_TOOLS.forEach((k, i) => makeTool(k, -1.9, 0.96, 0.3 - i * 0.36));
+  DEFAULT_TOOLS.forEach((k, i) => makeTool(k, -1.9, 0.96, 0.3 - i * 0.33));
   for (const b of balls) { releaseBody(b); world.removeBody(b); scene.remove(b.mesh); }
   balls.length = 0;
   spawnBall(1.6, 0.3, -0.6, 0x2f7fd1); spawnBall(2.0, 0.3, -0.9, 0xe0c020);
@@ -896,6 +901,7 @@ function updateHand(h, dt) {
       spawnDotOn = true;
     }
     if (paused) h.hasTip = false;
+    else if (t.def.saw) saw(h, t, dt);
     else if (t.def.melee) melee(h, t, dt);
     else {
       t.cool -= dt;
@@ -987,7 +993,7 @@ function fire(h, t) {
 
 // Blades and bats. A fast sideways sweep slashes (or bashes); a thrust along
 // the blade stabs, and the blade stays stuck in whatever it went into.
-const bladeA = new V3(), bladeDir = new V3(), tipVel = new V3();
+const bladeA = new V3(), bladeDir = new V3(), tipVel = new V3(), gutV = new V3();
 const qInv = new THREE.Quaternion();
 function melee(h, t, dt) {
   const def = t.def;
@@ -1008,7 +1014,10 @@ function melee(h, t, dt) {
         const pa = head ? b.b.pos : b.a.pos, r = (head ? 0.12 : b.r) + 0.04;
         if (segSeg(bladeA, h.tip, pa, b.b.pos) < r * r || segSeg(h.prevTip, h.tip, pa, b.b.pos) < r * r) { hit = b; break; }
       }
-      if (!hit && (segSeg(bladeA, h.tip, d.p.pelvis.pos, d.p.neck.pos) < 0.2 * 0.2 || segSeg(h.prevTip, h.tip, d.p.pelvis.pos, d.p.neck.pos) < 0.2 * 0.2)) torso = true;
+      // the blade can catch an arm and still open the belly behind it
+      const touch = segSeg(bladeA, h.tip, d.p.pelvis.pos, d.p.neck.pos) < 0.2 * 0.2;
+      if (touch) gutV.copy(bladeA).lerp(h.tip, segSeg.s);
+      if (!hit && (touch || segSeg(h.prevTip, h.tip, d.p.pelvis.pos, d.p.neck.pos) < 0.2 * 0.2)) torso = true;
       if (!hit && !torso) continue;
       const stab = !def.blunt && thrust > 1.4 && thrust > speed * 0.7;
       if (!stab && speed < 2.8) continue;
@@ -1034,12 +1043,50 @@ function melee(h, t, dt) {
       } else {
         gore.spray(at, tv, 16, 4, 0.6);
         d.addWound(hit, at, tv, 'slash');
+        if (touch) { if (d.disembowel(gutV) && hit) d.addWound(null, gutV, tv, 'slash'); }
+        else if (!hit) d.disembowel(at);
         d.hit(hit, hit ? def.dmg : 3, tv2.copy(tv).multiplyScalar(2.5), at);
         sfx.slice();
       }
     }
   }
   h.prevTip.copy(h.tip);
+}
+
+// Chainsaw: no swing needed. Hold the trigger to rev it and whatever the bar
+// touches gets chewed through a bit more every tenth of a second.
+let sawLevel = 0, sawCutting = false;
+function saw(h, t, dt) {
+  h.hasTip = false;
+  if (!h.trigger) { sawLevel = Math.max(sawLevel, 1); return; }
+  sawLevel = 2;
+  t.recoil = 0.02 + Math.random() * 0.03;   // rattle
+  if ((h.sawBuzz = (h.sawBuzz ?? 0) - dt) <= 0) { h.sawBuzz = 0.08; pulse(h, 0.45, 60); }
+  bladeA.copy(t.a.pos).lerp(t.b.pos, t.def.blade);
+  bladeDir.subVectors(t.b.pos, t.a.pos).normalize();
+  for (const d of dummies) {
+    let hit = null, torso = false;
+    for (const b of d.bones) {
+      const head = b.name === 'head';
+      if (head && d.headGone) continue;
+      const r = (head ? 0.12 : b.r) + 0.04;
+      if (segSeg(bladeA, t.b.pos, head ? b.b.pos : b.a.pos, b.b.pos) < r * r) { hit = b; break; }
+    }
+    if (!hit && segSeg(bladeA, t.b.pos, d.p.pelvis.pos, d.p.neck.pos) < 0.2 * 0.2) torso = true;
+    if (!hit && !torso) continue;
+    sawCutting = true;
+    if (d.sliceCd > 0) continue;
+    d.sliceCd = 0.1;
+    // where on the bar it's biting
+    const at = tv3.copy(bladeA).lerp(t.b.pos, segSeg.s);
+    tv.set(Math.random() - 0.5, 0.6 + Math.random(), Math.random() - 0.5).normalize();
+    gore.spray(at, tv, 14, 5, 0.9);
+    d.addWound(hit, at, bladeDir, 'slash');
+    d.hit(hit, 1.6, tv2.copy(bladeDir).multiplyScalar(1.2), at);
+    if (!hit) d.disembowel(at);
+    if (d.alive && Math.random() < 0.3) sfx.grunt();
+    bloody(h, 0.06);
+  }
 }
 
 // leave tool t embedded in a dummy's body part (mesh) and take it out of the hand
@@ -1441,6 +1488,7 @@ canvas.addEventListener('mousedown', e => {
   if (!locked && !noLock) { try { canvas.requestPointerLock()?.catch?.(() => { noLock = true; }); } catch { noLock = true; } }
   desk.trigger = true;
   const tool = desk.held?.type === 'tool' ? desk.held.tool : null;
+  if (tool?.def.saw) return;   // the saw just runs while the button is held
   if (!tool || tool.def.melee) {
     if (!desk.held) {
       // empty hand: press a panel button if we're pointing at one, otherwise punch
@@ -1520,8 +1568,9 @@ renderer.setAnimationLoop(time => {
     if (inVR) vrMove(dt); else desktopMove(dt);
     rig.updateMatrixWorld(true);
     panelCd -= dt;
-    spawnDotOn = false;
+    spawnDotOn = false; sawLevel = 0; sawCutting = false;
     for (const h of hands()) updateHand(h, dt);
+    sfx.saw(sawLevel, sawCutting);
     spawnDot.visible = spawnDotOn;
     $('spawnHud').hidden = !(spawnDotOn && !inVR);
     // touching a panel button with a hand presses it

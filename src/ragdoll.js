@@ -2,7 +2,7 @@
 // walking pose while alive ("active ragdoll"), goes limp when dead, and can
 // lose its head and limbs.
 import * as THREE from '../vendor/three.module.js';
-import { Particle, HALF, segSeg } from './physics.js?v=7';
+import { Particle, HALF, segSeg } from './physics.js?v=8';
 
 // rest pose, facing +Z
 const REST = {
@@ -41,6 +41,7 @@ const headGeo = new THREE.SphereGeometry(0.115, 14, 10);
 const torsoGeo = new THREE.BoxGeometry(0.4, 0.6, 0.21);
 const stumpGeo = new THREE.SphereGeometry(1, 8, 6);
 const stumpMat = new THREE.MeshLambertMaterial({ color: 0x8a0606 });
+const gutMat = new THREE.MeshLambertMaterial({ color: 0xc4596a });
 
 const t1 = new THREE.Vector3(), t2 = new THREE.Vector3(), t3 = new THREE.Vector3(), mb = new THREE.Matrix4();
 const w1 = new THREE.Vector3(), w2 = new THREE.Vector3(), wn = new THREE.Vector3(), wq = new THREE.Quaternion();
@@ -154,6 +155,7 @@ export class Dummy {
     this.phase = Math.random() * 6; this.moveAmt = 0; this.time = Math.random() * 10;
     this.wanderT = 0; this.wanderYaw = yaw; this.wandering = false;
     this.sliceCd = 0;
+    this.gutted = false; this.guts = [];
     this.maxHp = this.hp; this.hurtT = 0; this.angry = false; this.expr = ''; this.clutch = null; this.wounds = [];
     this.onDeath = null;
 
@@ -387,6 +389,46 @@ export class Dummy {
     if (best) this.clutch = { hand: best, decal: first.decal, t: 4.5 + Math.random() * 2 };
   }
 
+  // Belly opened up: loops of intestine spill out and hang from the wound.
+  // They're Verlet ropes pinned to the hips, so they swing, drag and can be grabbed.
+  disembowel(point) {
+    if (this.gutted) return false;
+    const P = this.p, w = this.world;
+    t1.subVectors(P.rSh.pos, P.lSh.pos).normalize();          // body right
+    t2.subVectors(P.neck.pos, P.pelvis.pos).normalize();      // body up
+    t3.crossVectors(t1, t2).normalize();                      // body forward
+    if (w1.subVectors(point, P.pelvis.pos).dot(t2) > 0.36) return false;   // too high: that's the chest
+    this.gutted = true;
+    const side = Math.max(-0.08, Math.min(0.08, w1.dot(t1)));
+    const front = w1.dot(t3) >= 0 ? 1 : -1;
+    const ends = [];
+    for (const s of [-1, 1]) {
+      let prev = null;
+      for (let i = 0; i < 6; i++) {
+        const p = new Particle(0, 0, 0, 0.03, 1.5);
+        p.pos.copy(P.pelvis.pos).addScaledVector(t2, 0.13 - i * 0.02).addScaledVector(t3, front * (0.11 + i * 0.035)).addScaledVector(t1, side + s * (0.025 + i * 0.012));
+        p.prev.copy(p.pos); p.body = this; p.detached = true; p.name = 'gut';
+        w.add(p); this.all.push(p);
+        if (prev) {
+          this.sticks.push(w.stick(prev, p, { len: 0.075, body: this }));
+          const mesh = new THREE.Mesh(capsule(0.027, 0.075), gutMat);
+          this.group.add(mesh); this.guts.push({ a: prev, b: p, mesh });
+        } else for (const k of ['pelvis', 'lHip', 'rHip', 'chest']) this.sticks.push(w.stick(P[k], p, { body: this }));
+        prev = p;
+      }
+      ends.push(prev);
+    }
+    // join the two strands into one hanging loop
+    this.sticks.push(w.stick(ends[0], ends[1], { len: 0.09, body: this }));
+    const loop = new THREE.Mesh(capsule(0.027, 0.09), gutMat);
+    this.group.add(loop); this.guts.push({ a: ends[0], b: ends[1], mesh: loop });
+    this.fx.spray(point, t3.multiplyScalar(front), 40, 3.5, 0.9);
+    this.fx.emitter(ends[0], 7, 30); this.fx.emitter(P.pelvis, 5, 25);
+    this.hp -= 35; this.bleeding += 1.5; this.hurtT = 2.5;
+    if (this.hp <= 0) this.die(); else this.knockdown(2.5);
+    return true;
+  }
+
   sever(bone) {
     if (bone.severed) return;
     bone.severed = true;
@@ -471,6 +513,10 @@ export class Dummy {
       this.headMesh.position.copy(hb.b.pos);
     }
     for (const st of this.stumps) st.mesh.position.copy(st.p.pos);
+    for (const gt of this.guts) {
+      gt.mesh.position.addVectors(gt.a.pos, gt.b.pos).multiplyScalar(0.5);
+      gt.mesh.quaternion.setFromUnitVectors(UP, t1.subVectors(gt.b.pos, gt.a.pos).normalize());
+    }
     const expr = !this.alive ? 'dead' : this.hurtT > 0 ? 'hurt'
       : (this.bleeding > 0 || this.hp < this.maxHp * 0.6) ? 'bleed' : this.angry ? 'angry' : 'neutral';
     if (expr !== this.expr) { this.expr = expr; this.headMesh.material.map = faceTex(this.skin, this.hair, expr); }

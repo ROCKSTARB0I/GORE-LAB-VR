@@ -1,5 +1,5 @@
 // Synthesised sound effects -- no audio files.
-let ac = null, noiseBuf = null;
+let ac = null, noiseBuf = null, sawNodes = null;
 
 function ctx() {
   if (!ac) {
@@ -51,6 +51,22 @@ export const sfx = {
   tick() { tone('square', 1100, 1100, 0.03, 0.08); },
   hurt() { tone('sawtooth', 220, 90, 0.18, 0.35); noise(0.12, 0.4, 600); },
   wave() { tone('square', 330, 330, 0.12, 0.2); setTimeout(() => tone('square', 495, 495, 0.2, 0.2), 140); },
+  // level: 0 off, 1 idling in the hand, 2 revving; cutting = biting into something
+  saw(level, cutting) {
+    if (!ac || (!sawNodes && !level)) return;
+    if (!sawNodes) {
+      const o1 = ac.createOscillator(), o2 = ac.createOscillator(), lp = ac.createBiquadFilter(), g = ac.createGain();
+      o1.type = 'sawtooth'; o2.type = 'square'; lp.type = 'lowpass'; g.gain.value = 0;
+      o1.connect(lp); o2.connect(lp); lp.connect(g).connect(ac.destination);
+      o1.start(); o2.start();
+      sawNodes = { o1, o2, lp, g };
+    }
+    const t = ac.currentTime, n = sawNodes;
+    const f = level === 2 ? (cutting ? 74 + Math.random() * 14 : 104) : 38;
+    n.o1.frequency.setTargetAtTime(f, t, 0.05); n.o2.frequency.setTargetAtTime(f * 1.51, t, 0.05);
+    n.lp.frequency.setTargetAtTime(level === 2 ? (cutting ? 2400 : 1300) : 500, t, 0.05);
+    n.g.gain.setTargetAtTime(level === 2 ? (cutting ? 0.3 : 0.2) : level === 1 ? 0.045 : 0, t, 0.04);
+  },
   beep() { tone('square', 660, 880, 0.08, 0.15); },
 };
 

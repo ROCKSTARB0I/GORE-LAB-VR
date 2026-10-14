@@ -1,6 +1,6 @@
 // Blood droplets, splat decals, bleeding stumps and gib chunks.
 import * as THREE from '../vendor/three.module.js';
-import { Particle, HALF, WALL_H } from './physics.js?v=7';
+import { Particle, HALF, WALL_H } from './physics.js?v=8';
 
 const N_DROPS = 600, N_DECALS = 900, N_GIBS = 48;
 const BLOOD = new THREE.Color(0x8a0303), SPARK = new THREE.Color(0xffd27a);
