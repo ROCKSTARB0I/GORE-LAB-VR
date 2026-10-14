@@ -1,8 +1,8 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=14';
-import { Dummy } from './ragdoll.js?v=14';
-import { Gore } from './gore.js?v=14';
-import { sfx, music } from './audio.js?v=14';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=15';
+import { Dummy } from './ragdoll.js?v=15';
+import { Gore } from './gore.js?v=15';
+import { sfx, music } from './audio.js?v=15';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -1175,7 +1175,7 @@ function updateAvatar() {
     const hand = inVR ? vrHands.find(h => h.active && (h.side === 'left') === (side < 0)) : (side > 0 ? desk : null);
     // the arm ends at the wrist, behind the hand, so it doesn't poke through it
     const H = hand ? av.c.copy(hand.glove.position).add(tv.set(0, 0, 0.13).applyQuaternion(hand.glove.quaternion))
-      : av.c.copy(sh).addScaledVector(UP, -0.55).addScaledVector(right, side * 0.05).addScaledVector(fwd, -Math.sin(avatar.phase + i * Math.PI) * stride * 0.6);
+      : av.c.copy(sh).addScaledVector(UP, -0.55).addScaledVector(right, side * 0.05);
     const elbow = joint(sh, H, 0.3, 0.29, tv.copy(UP).multiplyScalar(-0.6).addScaledVector(right, side * 0.5).addScaledVector(fwd, -0.3), av.e);
     placeLimb(avatar.arms[i][0], sh, elbow); placeLimb(avatar.arms[i][1], elbow, H);
   }
@@ -1204,7 +1204,7 @@ function grab(h) {
     const d = Math.sqrt(segSeg(h.pos, h.pos, t.a.pos, t.b.pos));
     if (t.held) {
       // second hand on a long gun someone is already holding: steady it
-      if (t.held !== h && t.def.twoHand && !t.support && d < 0.16 && d < bd) { bd = d; best = { type: 'support', tool: t }; }
+      if (t.held !== h && (t.def.twoHand || t.def.melee) && !t.support && !t.embed && d < 0.16 && d < bd) { bd = d; best = { type: 'support', tool: t }; }
       continue;
     }
     if (d < bd) { bd = d; best = { type: 'tool', tool: t }; }
@@ -1241,7 +1241,15 @@ function grab(h) {
   }
   if (!best) return;
   h.held = best;
-  if (best.type === 'support') { best.tool.support = h; pulse(h, 0.4, 40); return; }
+  if (best.type === 'support') {
+    const t = best.tool;
+    t.support = h;
+    // which end the second hand went on: in front of the first (a gun's barrel, a
+    // sword choked up) or behind it (a two-handed bat or axe grip)
+    t.supportAhead = tv.subVectors(h.pos, t.held.pos).dot(tv2.subVectors(t.b.pos, t.a.pos)) > 0;
+    t.supportAlong = Math.abs(tv.dot(tv2.normalize()));
+    pulse(h, 0.4, 40); return;
+  }
   if (best.type === 'tool') {
     const t = best.tool;
     if (t.stuck) {
@@ -1362,6 +1370,14 @@ function placeGlove(h) {
     g.quaternion.copy(t.mesh.quaternion).multiply(gq.setFromAxisAngle(X_AXIS, rot));
     gv.set(-0.016 * s, 0.03, -0.04).applyQuaternion(g.quaternion);   // centre of the closed fist -> the grip
     g.position.fromArray(pos).applyQuaternion(t.mesh.quaternion).add(t.mesh.position).add(gv);
+  } else if (held?.type === 'support' && held.tool.def.melee) {
+    // second hand wrapped round the handle, above or below the first
+    const t = held.tool, [pos, rot] = GRIPS[t.kind];
+    gy.copy(NEG_Z).applyQuaternion(t.mesh.quaternion);
+    g.quaternion.copy(t.mesh.quaternion).multiply(gq.setFromAxisAngle(X_AXIS, rot));
+    const along = (t.supportAhead ? 1 : -1) * Math.min(0.3, Math.max(0.1, t.supportAlong ?? 0.12));
+    gv.set(-0.016 * s, 0.03, -0.04).applyQuaternion(g.quaternion);
+    g.position.fromArray(pos).applyQuaternion(t.mesh.quaternion).add(t.mesh.position).addScaledVector(gy, along).add(gv);
   } else if (held?.type === 'support') {
     // palm up under the barrel, fingers wrapped over it
     const t = held.tool;
@@ -1418,10 +1434,11 @@ function updateHand(h, dt) {
     const t = held.tool;
     t.recoil = Math.max(0, t.recoil - dt * 4);
     tq.copy(h.quat);
-    if (t.def.melee) tq.multiply(TOOL_TILT.setFromAxisAngle(tv.set(1, 0, 0), inVR ? t.def.tiltVR ?? 1.05 : t.def.tiltDesk ?? 0.45));
-    if (t.support && h.pos.distanceTo(t.support.pos) > 0.12) {
-      // two-handed: the barrel runs from the trigger hand to the front hand
-      aimM.lookAt(h.pos, t.support.pos, tv.set(0, 1, 0).applyQuaternion(h.quat));
+    if (t.def.melee && !t.support) tq.multiply(TOOL_TILT.setFromAxisAngle(tv.set(1, 0, 0), inVR ? t.def.tiltVR ?? 1.05 : t.def.tiltDesk ?? 0.45));
+    if (t.support && h.pos.distanceTo(t.support.pos) > 0.08) {
+      // two-handed: the tool lies along the line between the hands
+      if (t.supportAhead) aimM.lookAt(h.pos, t.support.pos, tv.set(0, 1, 0).applyQuaternion(h.quat));
+      else aimM.lookAt(h.pos, tv2.copy(h.pos).multiplyScalar(2).sub(t.support.pos), tv.set(0, 1, 0).applyQuaternion(h.quat));
       tq.setFromRotationMatrix(aimM);
     }
     (t.aimQ ??= new THREE.Quaternion()).copy(tq);
@@ -2083,7 +2100,8 @@ const HELP = [
   ['HANDS AND GUNS', [
     'Grip: grab and let go. Point and grip to pull things to you.',
     'Trigger: shoot.   Grip alone points your finger.',
-    'Long guns: grip the barrel with your other hand to steady them.',
+    "Two hands: grip a long gun's barrel, or any melee weapon's handle,",
+    'with your other hand to hold it two-handed.',
     'Holsters: let go of a weapon at either hip or over your',
     'right shoulder to stow it. Grip there to draw it again.',
     'Desktop: E grab, click shoot, B holster or draw.',
