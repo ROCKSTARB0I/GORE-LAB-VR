@@ -1,8 +1,8 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=18';
-import { Dummy } from './ragdoll.js?v=18';
-import { Gore } from './gore.js?v=18';
-import { sfx, music } from './audio.js?v=18';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=19';
+import { Dummy } from './ragdoll.js?v=19';
+import { Gore } from './gore.js?v=19';
+import { sfx, music } from './audio.js?v=19';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -1020,7 +1020,8 @@ let inVR = false, started = false;
 const skinMat = new THREE.MeshLambertMaterial({ color: 0xe0b48c }), cuffMat = new THREE.MeshLambertMaterial({ color: 0x23262b });
 // style: 'default' | 'fingerless' | 'gloves' | 'realism' (shop unlocks)
 const nailMat = new THREE.MeshLambertMaterial({ color: 0xf0c8b8 });
-function buildHand(side, skin = skinMat, style = 'default', gloveHex = 0x1c1c1e) {
+// noCuff: the full body supplies the arm, so the hand has no sleeve stub of its own
+function buildHand(side, skin = skinMat, style = 'default', gloveHex = 0x1c1c1e, noCuff = false) {
   const s = side === 'left' ? 1 : -1;   // which way the thumb sits in the flat frame
   const root = new THREE.Group(), flat = new THREE.Group();
   flat.rotation.z = s * Math.PI / 2;
@@ -1043,7 +1044,8 @@ function buildHand(side, skin = skinMat, style = 'default', gloveHex = 0x1c1c1e)
   };
   const palm = seg(flat, 0.078, 0.026, 0.09, matFor('palm')); palm.position.z = 0;
   if (real) { palm.scale.set(palm.scale.x, 1.15, 0.86); for (let i = 0; i < 4; i++) { const k = new THREE.Mesh(new THREE.SphereGeometry(0.0095, 8, 6), skin); k.position.set(s * (0.029 - i * 0.0193), 0.006, -0.043); flat.add(k); } }
-  const cuff = seg(flat, 0.07, 0.05, 0.1, matFor('cuff')); cuff.position.set(0, 0, 0.1);
+  if (!noCuff) { const cuff = seg(flat, 0.07, 0.05, 0.1, matFor('cuff')); cuff.position.set(0, 0, 0.1); }
+  else { const heel = seg(flat, 0.07, 0.024, 0.03, matFor('palm')); heel.position.set(0, -0.001, 0.05); }   // heel of the hand meets the forearm
   const fingers = [];
   const LEN = [[0.04, 0.026, 0.02], [0.044, 0.029, 0.022], [0.04, 0.027, 0.02], [0.031, 0.02, 0.017]];
   for (let i = 0; i < 4; i++) {
@@ -1122,6 +1124,7 @@ try { Object.assign(SHOP, JSON.parse(localStorage.getItem('goreLabShop') || '{}'
 const GLOVE_COLORS = [['Black', 0x1c1c1e], ['Red', 0xa01c1c], ['Blue', 0x24489a], ['Green', 0x2f6a32], ['White', 0xe4e4e4], ['Orange', 0xe8792b], ['Purple', 0x5a2a8a]];
 const SHOP_ITEMS = { fingerless: ['FINGERLESS GLOVES', 15], gloves: ['FULL GLOVES', 30], realism: ['REALISTIC HANDS', 60], body: ['FULL BODY', 100] };
 const owns = k => k === 'default' || SHOP.owned.includes(k);
+const fullBodyOn = () => SHOP.body && owns('body');
 function saveShop() { try { localStorage.setItem('goreLabShop', JSON.stringify(SHOP)); } catch { /* ignore */ } }
 function shopLabel(k) {
   if (k === 'default') return 'DEFAULT HANDS' + (SHOP.style === 'default' ? '   ✔' : '');
@@ -1155,7 +1158,7 @@ function applyHands() {
   for (const h of [...vrHands, desk]) {
     const vis = h.glove.visible;
     scene.remove(h.glove);
-    h.glove = buildHand(h.side, h.skin, SHOP.style, GLOVE_COLORS[SHOP.gloveColor][1]);
+    h.glove = buildHand(h.side, h.skin, SHOP.style, GLOVE_COLORS[SHOP.gloveColor][1], fullBodyOn());
     h.glove.visible = vis; scene.add(h.glove);
   }
 }
@@ -1168,7 +1171,8 @@ const avatar = (() => {
   const torso = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.48, 0.15), shirt), hips = new THREE.Mesh(new THREE.BoxGeometry(0.29, 0.15, 0.15), pants);
   g.add(torso, hips);
   const feet = [0, 1].map(() => { const f = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.26), boot); g.add(f); return f; });
-  return { g, torso, hips, feet, phase: 0, speed: 0, last: new V3(), arms: [[limb(0.042, shirt), limb(0.034, shirt)], [limb(0.042, shirt), limb(0.034, shirt)]], legs: [[limb(0.062, pants), limb(0.05, pants)], [limb(0.062, pants), limb(0.05, pants)]] };
+  const wrists = [0, 1].map(() => { const w = new THREE.Mesh(new THREE.SphereGeometry(0.031, 10, 8), skinMat); g.add(w); return w; });
+  return { g, torso, hips, feet, wrists, phase: 0, speed: 0, last: new V3(), arms: [[limb(0.045, shirt), limb(0.033, skinMat)], [limb(0.045, shirt), limb(0.033, skinMat)]], legs: [[limb(0.062, pants), limb(0.05, pants)], [limb(0.062, pants), limb(0.05, pants)]] };
 })();
 const av = { a: new V3(), b: new V3(), c: new V3(), e: new V3(), f: new V3(), r: new V3(), u: new V3(0, 1, 0) };
 function placeLimb(m, a, b) {
@@ -1213,11 +1217,13 @@ function updateAvatar() {
     // arms to the hands (a free arm hangs at your side)
     const sh = av.b.copy(neck).addScaledVector(UP, -0.05).addScaledVector(right, side * 0.165);
     const hand = inVR ? vrHands.find(h => h.active && (h.side === 'left') === (side < 0)) : (side > 0 ? desk : null);
-    // the arm ends at the wrist, behind the hand, so it doesn't poke through it
-    const H = hand ? av.c.copy(hand.glove.position).add(tv.set(0, 0, 0.13).applyQuaternion(hand.glove.quaternion))
+    // the forearm runs right into the heel of the hand (the wrist point in the hand's own frame)
+    const ws = hand?.side === 'left' ? 1 : -1;
+    const H = hand ? av.c.copy(hand.glove.position).add(tv.set(-ws * 0.012, -0.03, 0.125).applyQuaternion(hand.glove.quaternion))
       : av.c.copy(sh).addScaledVector(UP, -0.55).addScaledVector(right, side * 0.05);
     const elbow = joint(sh, H, 0.3, 0.29, tv.copy(UP).multiplyScalar(-0.6).addScaledVector(right, side * 0.5).addScaledVector(fwd, -0.3), av.e);
     placeLimb(avatar.arms[i][0], sh, elbow); placeLimb(avatar.arms[i][1], elbow, H);
+    avatar.wrists[i].position.copy(H); avatar.wrists[i].visible = !!hand;
   }
 }
 
