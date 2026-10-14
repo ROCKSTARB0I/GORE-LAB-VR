@@ -476,12 +476,12 @@ const MAX_DUMMIES = 12;
 
 const DUMMY_TYPES = {
   dummy: {},
-  zombie: { aggro: true, skin: 0x8faa72, speed: 1.3, hair: 0x2b2f24 },
+  zombie: { aggro: true, noPickup: true, skin: 0x8faa72, speed: 1.3, hair: 0x2b2f24 },
   brute: { hp: 320, tough: 3, shirt: 0x1d1f24, speed: 0.85, hair: null },
   runner: { type: 'runner', aggro: true, skin: 0xb8b0a0, speed: 2.3, hair: 0x1a1a1a, shirt: 0x5a6a5a },
   riot: { type: 'riot', armor: 1, hp: 150, shirt: 0x1c2638, speed: 1.0, aggro: true, hair: null },
   bomber: { type: 'bomber', bomb: true, aggro: true, speed: 1.7, shirt: 0x6a5a40 },
-  crawler: { type: 'crawler', legless: true, aggro: true, skin: 0x8faa72, hair: 0x2b2f24 },
+  crawler: { type: 'crawler', legless: true, aggro: true, noPickup: true, skin: 0x8faa72, hair: 0x2b2f24 },
   gunman: { type: 'gunman', gunner: true, aggro: true, shirt: 0x2a2a2a, hp: 90 },
   giant: { type: 'giant', scale: 1.45, hp: 600, tough: 4, speed: 0.8, aggro: true, dmg: 25, shirt: 0x4a2a2a, hair: null },
   butcher: { type: 'butcher', boss: 'THE BUTCHER', scale: 1.75, hp: 1600, tough: 6, speed: 0.85, aggro: true, dmg: 35, shirt: 0xcfc6b2, hair: null, cleaver: true },
@@ -520,6 +520,7 @@ function spawnDummy(x, z, type = 'dummy') {
   const d = new Dummy(world, scene, gore, x, z, Math.atan2(head.x - x, head.z - z), typeof type === 'object' ? type : DUMMY_TYPES[type]);
   d.onDeath = () => { addKill(); if (SV.on) SV.kills++; };
   const o = typeof type === 'object' ? type : DUMMY_TYPES[type];
+  d.noPickup = !!o?.noPickup;
   if (o?.gunner) { d.gunner = true; d.shootT = 2 + Math.random() * 2; giveItem(d, 'gun'); }
   if (o?.cleaver) giveItem(d, 'cleaver');
   if (o?.bomb) d.bomb = true;
@@ -2534,7 +2535,7 @@ function updateArmed(d, sdt, head, dist) {
     return;
   }
   // unarmed and hostile: go and get the nearest weapon lying around
-  if (!d.alive || d.state !== 'stand' || d.heldBy || d.item || !(S.hostile || d.aggro)) { if (d.goal) { d.goal = null; if (d.seek) d.seek.claim = null; d.seek = null; } return; }
+  if (!d.alive || d.noPickup || d.state !== 'stand' || d.heldBy || d.item || !(S.hostile || d.aggro)) { if (d.goal) { d.goal = null; if (d.seek) d.seek.claim = null; d.seek = null; } return; }
   if (d.seek && (!freeTool(d.seek) || d.seek.claim !== d)) { d.seek = null; d.goal = null; }
   if (!d.seek && (d.seekT = (d.seekT ?? 0) - sdt) <= 0) {
     d.seekT = 0.6;
