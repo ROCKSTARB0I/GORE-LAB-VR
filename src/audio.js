@@ -87,7 +87,7 @@ const TRACKS = [
     pad: { type: 'sine', vol: 0.07, notes: [0, 2, 4] }, bass: { type: 'triangle', pat: 'x...x...x...x...', vol: 0.14, len: 2.5 },
     lead: { type: 'square', vol: 0.035, density: 0.5, len: 1.8 }, hat: '..x...x...x...x.', hatVol: 0.02 },
 ];
-let musicGain = null, mTimer = null, mCur = -1, mStep = 0, mNext = 0, mVol = 0.5, mMelody = null;
+let musicGain = null, mBus = null, mBuses = 0, mTimer = null, mCur = -1, mStep = 0, mNext = 0, mVol = 0.5, mMelody = null;
 
 function rng(seed) {
   return () => { seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
@@ -104,7 +104,7 @@ function mNote(type, f, t, dur, v, attack, cut, pluck) {
   else { g.gain.setValueAtTime(v, t + Math.max(attack, dur - 0.06)); g.gain.linearRampToValueAtTime(0.0001, t + dur + 0.1); }
   let node = o;
   if (cut) { const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = cut; o.connect(lp); node = lp; }
-  node.connect(g).connect(musicGain);
+  node.connect(g).connect(mBus);
   o.start(t); o.stop(t + dur + 0.15);
 }
 function mNoise(t, dur, v, freq, type) {
@@ -112,14 +112,14 @@ function mNoise(t, dur, v, freq, type) {
   src.buffer = noiseBuf; src.loop = true; src.loopStart = Math.random() * 0.5;
   f.type = type; f.frequency.value = freq;
   g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
-  src.connect(f).connect(g).connect(musicGain);
+  src.connect(f).connect(g).connect(mBus);
   src.start(t); src.stop(t + dur + 0.02);
 }
 function mKick(t, v) {
   const o = ac.createOscillator(), g = ac.createGain();
   o.frequency.setValueAtTime(130, t); o.frequency.exponentialRampToValueAtTime(42, t + 0.12);
   g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.0008, t + 0.22);
-  o.connect(g).connect(musicGain); o.start(t); o.stop(t + 0.25);
+  o.connect(g).connect(mBus); o.start(t); o.stop(t + 0.25);
 }
 function mSchedule() {
   const tr = TRACKS[mCur];
@@ -142,15 +142,27 @@ function mSchedule() {
 export const music = {
   tracks: TRACKS.map(t => ({ name: t.name })),
   get current() { return mCur; },
+  get buses() { return mBuses; },
   get volume() { return mVol; },
   setVolume(v) { mVol = Math.max(0, Math.min(1, Math.round(v * 10) / 10)); if (musicGain) musicGain.gain.value = mVol * 0.7; },
   play(i) {
     clearInterval(mTimer); mTimer = null; mCur = -1;
+    // Only one track is ever audible: each track plays into its own bus, and
+    // the old bus is silenced and unplugged before the next one starts, so
+    // notes that were already ringing or queued can't overlap the new track.
+    if (mBus) {
+      const old = mBus; mBus = null;
+      old.gain.cancelScheduledValues(ac.currentTime);
+      old.gain.setValueAtTime(old.gain.value, ac.currentTime);
+      old.gain.linearRampToValueAtTime(0, ac.currentTime + 0.1);
+      setTimeout(() => { old.disconnect(); mBuses--; }, 150);
+    }
     const tr = TRACKS[i];
     if (!tr) return;
     ctx();
     if (!musicGain) { musicGain = ac.createGain(); musicGain.connect(ac.destination); }
     musicGain.gain.value = mVol * 0.7;
+    mBus = ac.createGain(); mBus.connect(musicGain); mBuses++;
     // two passes of melody so the loop doesn't repeat too soon
     const r = rng(tr.seed), n = tr.prog.length * 16;
     mMelody = [0, 1].map(() => {
