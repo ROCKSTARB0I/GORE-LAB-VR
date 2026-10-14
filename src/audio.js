@@ -285,3 +285,41 @@ sfx.voice = (ev, pos, type, scale = 1) => {
     default: cry(out, 200 * p, 160 * p, 0.25, 0.3);
   }
 };
+
+// ---------------------------------------------------------------- ambience
+// birdsong by day in the backyard, crickets at night
+let ambTimer = null;
+function chirp(base, notes, pan, vol) {
+  const t0 = ac.currentTime, p = ac.createStereoPanner(); p.pan.value = pan; p.connect(ac.destination);
+  for (let i = 0; i < notes; i++) {
+    const t = t0 + i * (0.07 + Math.random() * 0.05), o = ac.createOscillator(), g = ac.createGain();
+    const f = base * (0.9 + Math.random() * 0.4);
+    o.type = 'sine'; o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * (Math.random() < 0.5 ? 1.5 : 0.7), t + 0.06);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+    o.connect(g).connect(p); o.start(t); o.stop(t + 0.08);
+  }
+}
+function cricket(pan) {
+  const t0 = ac.currentTime, p = ac.createStereoPanner(); p.pan.value = pan; p.connect(ac.destination);
+  for (let i = 0; i < 3; i++) {
+    const t = t0 + i * 0.05, o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'square'; o.frequency.value = 4400;
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.012, t + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.03);
+    o.connect(g).connect(p); o.start(t); o.stop(t + 0.04);
+  }
+}
+sfx.ambience = (kind) => {
+  clearTimeout(ambTimer); ambTimer = null;
+  if (!ac || !kind) return;
+  const next = () => {
+    if (kind === 'birds') {
+      const n = 1 + Math.floor(Math.random() * 2);
+      for (let k = 0; k < n; k++) setTimeout(() => chirp(2200 + Math.random() * 2600, 2 + Math.floor(Math.random() * 6), Math.random() * 2 - 1, 0.03 + Math.random() * 0.03), k * 300);
+      ambTimer = setTimeout(next, 900 + Math.random() * 2600);
+    } else {
+      cricket(Math.random() * 2 - 1);
+      ambTimer = setTimeout(next, 250 + Math.random() * 700);
+    }
+  };
+  next();
+};

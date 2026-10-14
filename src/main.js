@@ -1,8 +1,8 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=17';
-import { Dummy } from './ragdoll.js?v=17';
-import { Gore } from './gore.js?v=17';
-import { sfx, music } from './audio.js?v=17';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=18';
+import { Dummy } from './ragdoll.js?v=18';
+import { Gore } from './gore.js?v=18';
+import { sfx, music } from './audio.js?v=18';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -190,7 +190,7 @@ const MAPS = {
     },
   },
   backyard: {
-    name: 'Backyard', bg: 0x8ec9f0, hemi: [0xffffff, 0x7fa860, 2.3], sun: [0xfff3d0, 1.9], wallH: 1.8,
+    name: 'Backyard', amb: 'birds', bg: 0x8ec9f0, hemi: [0xffffff, 0x7fa860, 2.3], sun: [0xfff3d0, 1.9], wallH: 1.8,
     build(g, boxes, night = false) {
       addFloor(g, new THREE.MeshLambertMaterial({ map: tiled(noiseTex('#5f9a45', 34), HALF, HALF) }));
       const fence = tiled(canvasTex(128, 128, (c, w, h) => {
@@ -221,7 +221,7 @@ const MAPS = {
     },
   },
   backyardNight: {
-    name: 'Backyard (Night)', short: 'Yard Night', bg: 0x0a0f1e, fog: [0x0a0f1e, 18, 80], hemi: [0x6a7cb0, 0x10180e, 0.95], sun: [0xa8b8ff, 0.55], wallH: 1.8,
+    name: 'Backyard (Night)', amb: 'crickets', short: 'Yard Night', bg: 0x0a0f1e, fog: [0x0a0f1e, 18, 80], hemi: [0x6a7cb0, 0x10180e, 0.95], sun: [0xa8b8ff, 0.55], wallH: 1.8,
     build(g, boxes) { MAPS.backyard.build(g, boxes, true); },
   },
   rooftopDay: {
@@ -338,6 +338,7 @@ function setMap(key) {
   if (!MAPS[key]) key = 'lab';
   const def = MAPS[key];
   setHalf(def.half ?? 8);
+  sfx.ambience?.(def.amb);
   scene.fog = def.fog ? new THREE.Fog(def.fog[0], def.fog[1], def.fog[2]) : null;
   if (mapGroup) {
     scene.remove(mapGroup);
