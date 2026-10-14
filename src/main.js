@@ -1,8 +1,8 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, WALL_H, TICK, segSeg } from './physics.js?v=9';
-import { Dummy } from './ragdoll.js?v=9';
-import { Gore } from './gore.js?v=9';
-import { sfx, music } from './audio.js?v=9';
+import { World, Particle, HALF, WALL_H, TICK, segSeg } from './physics.js?v=10';
+import { Dummy } from './ragdoll.js?v=10';
+import { Gore } from './gore.js?v=10';
+import { sfx, music } from './audio.js?v=10';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);

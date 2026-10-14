@@ -2,7 +2,7 @@
 // walking pose while alive ("active ragdoll"), goes limp when dead, and can
 // lose its head and limbs.
 import * as THREE from '../vendor/three.module.js';
-import { Particle, HALF, segSeg } from './physics.js?v=9';
+import { Particle, HALF, segSeg } from './physics.js?v=10';
 
 // rest pose, facing +Z
 const REST = {
@@ -250,10 +250,21 @@ for (const k in ORGANS) organMats[k] = new THREE.MeshLambertMaterial({ color: OR
 
 // The head breaks apart in twelve pieces of scalp and face over a skull core.
 const HEAD_R = 0.115, BANDS = [0, 0.36, 0.66, 1].map(v => v * Math.PI);
-const pieceGeo = [0, 1, 2].map(b => [0, 1, 2, 3].map(q => new THREE.SphereGeometry(HEAD_R, 5, 4, q * Math.PI / 2, Math.PI / 2, BANDS[b], BANDS[b + 1] - BANDS[b])));
+// A partial sphere gets texture coordinates stretched over the whole image, so
+// every piece would show an entire face. Squeeze them back to the slice of the
+// image that part of the head actually covers.
+function sliceGeo(r, ws, hs, phi0, phiLen, th0, thLen) {
+  const g = new THREE.SphereGeometry(r, ws, hs, phi0, phiLen, th0, thLen), uv = g.attributes.uv;
+  for (let i = 0; i < uv.count; i++) {
+    const u = Math.min(1, Math.max(0, uv.getX(i))), v = 1 - uv.getY(i);
+    uv.setXY(i, (phi0 + u * phiLen) / (Math.PI * 2), 1 - (th0 + v * thLen) / Math.PI);
+  }
+  return g;
+}
+const pieceGeo = [0, 1, 2].map(b => [0, 1, 2, 3].map(q => sliceGeo(HEAD_R, 5, 4, q * Math.PI / 2, Math.PI / 2, BANDS[b], BANDS[b + 1] - BANDS[b])));
 const EMPTY_GEO = new THREE.BufferGeometry();
 const coreGeo = new THREE.SphereGeometry(0.099, 14, 10);
-const coreHalfGeo = [new THREE.SphereGeometry(0.099, 8, 10, Math.PI / 2, Math.PI), new THREE.SphereGeometry(0.099, 8, 10, Math.PI * 1.5, Math.PI)];   // right, left
+const coreHalfGeo = [sliceGeo(0.099, 8, 10, Math.PI / 2, Math.PI, 0, Math.PI), sliceGeo(0.099, 8, 10, Math.PI * 1.5, Math.PI, 0, Math.PI)];   // right, left
 const coreMat = new THREE.MeshLambertMaterial({ map: texOf(128, 64, (g, w, h) => {
   g.fillStyle = '#7a1212'; g.fillRect(0, 0, w, h);                       // raw muscle
   g.strokeStyle = '#4f0707'; g.lineWidth = 1; for (let x = 0; x < w; x += 5) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x + 3, h); g.stroke(); }
