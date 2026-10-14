@@ -1,8 +1,8 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=19';
-import { Dummy } from './ragdoll.js?v=19';
-import { Gore } from './gore.js?v=19';
-import { sfx, music } from './audio.js?v=19';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=20';
+import { Dummy } from './ragdoll.js?v=20';
+import { Gore } from './gore.js?v=20';
+import { sfx, music } from './audio.js?v=20';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -1157,6 +1157,7 @@ function applyHands() {
   if (!owns(SHOP.style)) SHOP.style = 'default';
   for (const h of [...vrHands, desk]) {
     const vis = h.glove.visible;
+    for (const ch of [...h.glove.children]) if (avatar.arms.some(a => a[1] === ch) || avatar.wrists.includes(ch)) avatar.g.add(ch);
     scene.remove(h.glove);
     h.glove = buildHand(h.side, h.skin, SHOP.style, GLOVE_COLORS[SHOP.gloveColor][1], fullBodyOn());
     h.glove.visible = vis; scene.add(h.glove);
@@ -1222,8 +1223,20 @@ function updateAvatar() {
     const H = hand ? av.c.copy(hand.glove.position).add(tv.set(-ws * 0.012, -0.03, 0.125).applyQuaternion(hand.glove.quaternion))
       : av.c.copy(sh).addScaledVector(UP, -0.55).addScaledVector(right, side * 0.05);
     const elbow = joint(sh, H, 0.3, 0.29, tv.copy(UP).multiplyScalar(-0.6).addScaledVector(right, side * 0.5).addScaledVector(fwd, -0.3), av.e);
-    placeLimb(avatar.arms[i][0], sh, elbow); placeLimb(avatar.arms[i][1], elbow, H);
-    avatar.wrists[i].position.copy(H); avatar.wrists[i].visible = !!hand;
+    placeLimb(avatar.arms[i][0], sh, elbow);
+    const fore = avatar.arms[i][1], wrist = avatar.wrists[i];
+    if (hand) {
+      // The forearm belongs to the hand model: its wrist end is fixed in the
+      // hand's own space, so the two can never come apart; only the elbow end moves.
+      const g = hand.glove;
+      if (fore.parent !== g) { g.add(fore); g.add(wrist); }
+      g.updateMatrixWorld(true);
+      const wl = av.b.set(-ws * 0.012, -0.03, 0.125), el = g.worldToLocal(av.f.copy(elbow));
+      placeLimb(fore, wl, el); wrist.position.copy(wl); wrist.visible = true;
+    } else {
+      if (fore.parent !== avatar.g) { avatar.g.add(fore); avatar.g.add(wrist); }
+      placeLimb(fore, elbow, H); wrist.visible = false;
+    }
   }
 }
 
@@ -2697,9 +2710,10 @@ function frame(time) {
     rig.updateMatrixWorld(true);
     panelCd -= dt;
     { const hp = headPos(); sfx.setListener(hp.x, hp.y, hp.z, bodyYaw()); }
-    updateHolsters(); updateAvatar();
+    updateHolsters();
     spawnDotOn = false; sawLevel = 0; sawCutting = false; flameOn = false;
     for (const h of hands()) updateHand(h, dt);
+    updateAvatar();
     sfx.saw(sawLevel, sawCutting);
     sfx.flame(flameOn && !paused);
     spawnDot.visible = spawnDotOn;
