@@ -3,7 +3,8 @@
 // guns, balls, barrels, gibs) is made of these particles.
 import * as THREE from '../vendor/three.module.js';
 
-export const HALF = 8;        // room is 16 x 16 m
+export let HALF = 8;          // half the width of the play area; each map sets its own
+export function setHalf(v) { HALF = v; }
 export const WALL_H = 5;
 export const TICK = 1 / 90;   // real seconds per physics tick
 

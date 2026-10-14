@@ -1,5 +1,5 @@
 // Synthesised sound effects -- no audio files.
-let ac = null, noiseBuf = null, sawNodes = null;
+let ac = null, noiseBuf = null, sawNodes = null, flameNodes = null;
 
 function ctx() {
   if (!ac) {
@@ -32,12 +32,16 @@ function tone(type, f0, f1, dur, vol) {
 }
 
 export const sfx = {
-  init() { ctx(); },
+  init() { ctx(); loadVoices(); },
   shot(kind) {
     if (kind === 'shotgun') { noise(0.35, 0.9, 2600, 'lowpass', 300); tone('sine', 140, 40, 0.3, 0.9); }
     else if (kind === 'revolver') { noise(0.25, 0.8, 3000, 'lowpass', 400); tone('sine', 170, 45, 0.22, 0.8); }
     else if (kind === 'rifle') { noise(0.12, 0.6, 3800, 'lowpass', 700); tone('square', 190, 70, 0.09, 0.3); }
     else if (kind === 'rocket') { noise(0.7, 0.7, 500, 'bandpass', 2500); tone('sawtooth', 90, 300, 0.5, 0.2); }
+    else if (kind === 'sniper') { noise(0.6, 1.0, 5000, 'lowpass', 200); tone('sine', 120, 30, 0.5, 1.0); }
+    else if (kind === 'minigun') { noise(0.06, 0.4, 4500, 'lowpass', 1200); tone('square', 300, 120, 0.04, 0.18); }
+    else if (kind === 'launcher') { tone('sine', 160, 60, 0.18, 0.7); noise(0.12, 0.3, 900, 'lowpass', 200); }
+    else if (kind === 'crossbow') { tone('square', 520, 140, 0.12, 0.25); noise(0.05, 0.3, 3000, 'bandpass', 800); }
     else if (kind === 'smg') { noise(0.09, 0.45, 4200, 'lowpass', 900); tone('square', 260, 90, 0.07, 0.25); }
     else { noise(0.14, 0.6, 3600, 'lowpass', 600); tone('sine', 200, 60, 0.12, 0.6); }
   },
@@ -51,6 +55,18 @@ export const sfx = {
   tick() { tone('square', 1100, 1100, 0.03, 0.08); },
   hurt() { tone('sawtooth', 220, 90, 0.18, 0.35); noise(0.12, 0.4, 600); },
   wave() { tone('square', 330, 330, 0.12, 0.2); setTimeout(() => tone('square', 495, 495, 0.2, 0.2), 140); },
+  // flamethrower roar while it's firing
+  flame(on) {
+    if (!ac || (!flameNodes && !on)) return;
+    if (!flameNodes) {
+      const src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+      src.buffer = noiseBuf; src.loop = true; f.type = 'lowpass'; f.frequency.value = 700; g.gain.value = 0;
+      src.connect(f).connect(g).connect(ac.destination); src.start();
+      flameNodes = { f, g };
+    }
+    flameNodes.g.gain.setTargetAtTime(on ? 0.35 : 0, ac.currentTime, 0.06);
+    flameNodes.f.frequency.setTargetAtTime(on ? 600 + Math.random() * 500 : 400, ac.currentTime, 0.05);
+  },
   // level: 0 off, 1 idling in the hand, 2 revving; cutting = biting into something
   saw(level, cutting) {
     if (!ac || (!sawNodes && !level)) return;
@@ -194,4 +210,78 @@ export const music = {
     mCur = i; mStep = 0; mNext = ac.currentTime + 0.1;
     mTimer = setInterval(mSchedule, 80);
   },
+};
+
+// ---------------------------------------------------------------- voices
+// Each event can play any recorded clip listed in voice/manifest.json (see
+// voice/VOICE_LINES.md). Events with nothing recorded get a synthesized cry.
+const VOICE_EVENTS = {"hurt": ["hurt_01", "hurt_02", "hurt_03", "hurt_04", "hurt_05", "hurt_06"], "hurtBad": ["hurt_bad_01", "hurt_bad_02", "hurt_bad_03", "hurt_bad_04"], "stabbed": ["stabbed_01", "stabbed_02", "stabbed_03"], "dismember": ["dismember_01", "dismember_02", "dismember_03", "dismember_04"], "gutted": ["gutted_01", "gutted_02", "gutted_03"], "heart": ["heart_01", "heart_02"], "die": ["die_01", "die_02", "die_03", "die_04"], "burn": ["burn_start_01", "burn_start_02", "burn_start_03"], "burning": ["burning_01", "burning_02", "burning_03"], "burnDie": ["burn_die_01", "burn_die_02"], "choke": ["choke_01", "choke_02", "choke_03"], "passout": ["passout_01", "passout_02"], "wake": ["wake_01", "wake_02"], "grabbed": ["grabbed_01", "grabbed_02", "grabbed_03"], "attack": ["attack_01", "attack_02", "attack_03"], "taunt": ["taunt_01", "taunt_02"], "bomber": ["bomber_01", "bomber_02"]};
+const voiceBufs = {};
+let voicesLoaded = false, voicesPlaying = 0;
+const listener = { x: 0, y: 1.6, z: 0, yaw: 0 };
+async function loadVoices() {
+  if (voicesLoaded) return;
+  voicesLoaded = true;
+  try {
+    const list = await (await fetch('voice/manifest.json', { cache: 'no-cache' })).json();
+    for (const file of list) {
+      try {
+        const buf = await ac.decodeAudioData(await (await fetch('voice/' + file)).arrayBuffer());
+        voiceBufs[file.replace(/\.[a-z0-9]+$/i, '')] = buf;
+      } catch { /* a missing or broken file just falls back to the synth */ }
+    }
+  } catch { /* no manifest: synth only */ }
+}
+// left/right and distance from the player
+function spatial(pos) {
+  const dx = pos.x - listener.x, dz = pos.z - listener.z, dist = Math.hypot(dx, dz, pos.y - listener.y);
+  const ang = Math.atan2(dx, -dz) + listener.yaw;
+  const pan = ac.createStereoPanner(); pan.pan.value = Math.max(-1, Math.min(1, Math.sin(ang)));
+  const g = ac.createGain(); g.gain.value = 1 / (1 + dist * 0.35);
+  pan.connect(g).connect(ac.destination);
+  return pan;
+}
+// a crude vocal cry: buzzy source through a couple of vowel-ish filters
+function cry(out, f0, f1, dur, vol, wobble = 0) {
+  const t = ac.currentTime, o = ac.createOscillator(), f = ac.createBiquadFilter(), f2 = ac.createBiquadFilter(), g = ac.createGain();
+  o.type = 'sawtooth'; o.frequency.setValueAtTime(f0, t); o.frequency.linearRampToValueAtTime(f1, t + dur);
+  if (wobble) { const l = ac.createOscillator(), lg = ac.createGain(); l.frequency.value = 7; lg.gain.value = wobble; l.connect(lg).connect(o.frequency); l.start(t); l.stop(t + dur); }
+  f.type = 'bandpass'; f.frequency.value = 800; f.Q.value = 3; f2.type = 'bandpass'; f2.frequency.value = 1300; f2.Q.value = 4;
+  g.gain.setValueAtTime(0.001, t); g.gain.linearRampToValueAtTime(vol, t + 0.04); g.gain.setValueAtTime(vol, t + dur * 0.7); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(f).connect(g); o.connect(f2).connect(g); g.connect(out);
+  o.start(t); o.stop(t + dur + 0.05);
+}
+function breath(out, dur, vol, freq) {
+  const t = ac.currentTime, src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+  src.buffer = noiseBuf; src.loop = true; f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = 1.5;
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  src.connect(f).connect(g).connect(out); src.start(t); src.stop(t + dur);
+}
+sfx.setListener = (x, y, z, yaw) => { listener.x = x; listener.y = y; listener.z = z; listener.yaw = yaw; };
+sfx.loadVoices = () => { if (ac) loadVoices(); };
+// type: who's speaking (giants and bosses deeper, runners higher); scale: body size
+sfx.voice = (ev, pos, type, scale = 1) => {
+  if (!ac || voicesPlaying > 3) return;
+  voicesPlaying++; setTimeout(() => voicesPlaying--, 900);
+  const out = spatial(pos), pitch = (type === 'runner' ? 1.15 : 1) / scale;
+  const recorded = (VOICE_EVENTS[ev] || []).filter(id => voiceBufs[id]);
+  if (recorded.length) {
+    const src = ac.createBufferSource();
+    src.buffer = voiceBufs[recorded[Math.floor(Math.random() * recorded.length)]];
+    src.playbackRate.value = pitch; src.connect(out); src.start();
+    return;
+  }
+  const p = pitch * (0.9 + Math.random() * 0.2);
+  switch (ev) {
+    case 'hurt': case 'attack': case 'taunt': case 'grabbed': cry(out, 190 * p, 140 * p, 0.2, 0.35); break;
+    case 'hurtBad': case 'stabbed': case 'gutted': cry(out, 260 * p, 380 * p, 0.55, 0.4, 12); break;
+    case 'dismember': case 'burn': case 'burning': cry(out, 340 * p, 560 * p, 0.9, 0.45, 25); break;
+    case 'die': case 'heart': cry(out, 220 * p, 80 * p, 0.8, 0.35); breath(out, 0.9, 0.15, 500); break;
+    case 'burnDie': cry(out, 420 * p, 120 * p, 1.1, 0.4, 20); break;
+    case 'choke': for (let i = 0; i < 4; i++) setTimeout(() => breath(out, 0.12, 0.35, 350), i * 140); break;
+    case 'passout': breath(out, 1.2, 0.25, 400); break;
+    case 'wake': cry(out, 120 * p, 170 * p, 0.6, 0.25); break;
+    case 'bomber': cry(out, 240 * p, 300 * p, 0.5, 0.4, 6); break;
+    default: cry(out, 200 * p, 160 * p, 0.25, 0.3);
+  }
 };

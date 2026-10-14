@@ -2,7 +2,7 @@
 // walking pose while alive ("active ragdoll"), goes limp when dead, and can
 // lose its head and limbs.
 import * as THREE from '../vendor/three.module.js';
-import { Particle, HALF, segSeg } from './physics.js?v=13';
+import { Particle, HALF, segSeg } from './physics.js?v=14';
 
 // rest pose, facing +Z
 const REST = {
@@ -53,18 +53,34 @@ const Z_AXIS = new THREE.Vector3(0, 0, 1);
 const HAIR = [0x2a1b10, 0x5a3a1a, 0xc9a24a, 0x1a1a1a, 0x8a3b1e, 0x6b6b6b];
 const css = hex => '#' + hex.toString(16).padStart(6, '0');
 const faceCache = {};
-function faceTex(skin, hair, expr) {
-  const key = skin + '_' + hair + '_' + expr;
+// bruise: 0-3, how badly the face has been beaten (black eyes, cuts, swelling)
+function faceTex(skin, hair, expr, bruise = 0) {
+  const key = skin + '_' + hair + '_' + expr + '_' + bruise;
   if (faceCache[key]) return faceCache[key];
   const c = document.createElement('canvas'); c.width = 256; c.height = 128;
   const g = c.getContext('2d'), cx = 64, LINE = 'rgba(45,22,14,.95)', BLOOD = '#8a0303';
+  if (expr === 'skeleton') return faceCache[key] = skullTex();
   g.fillStyle = css(skin); g.fillRect(0, 0, 256, 128);
-  if (expr === 'dead') { g.fillStyle = 'rgba(170,185,200,.4)'; g.fillRect(0, 0, 256, 128); }
+  if (expr === 'dead' || expr === 'out') { g.fillStyle = 'rgba(170,185,200,.35)'; g.fillRect(0, 0, 256, 128); }
+  if (expr === 'choke') { g.fillStyle = 'rgba(120,20,60,.38)'; g.fillRect(0, 0, 256, 128); }
+  if (expr === 'scorched') {
+    // skin burned off: charred black with raw red cracks, no hair
+    g.fillStyle = '#2a1712'; g.fillRect(0, 0, 256, 128);
+    for (let i = 0; i < 90; i++) { g.fillStyle = Math.random() < 0.5 ? 'rgba(120,20,10,.7)' : 'rgba(10,6,4,.8)'; g.beginPath(); g.ellipse(Math.random() * 256, Math.random() * 128, 2 + Math.random() * 7, 1 + Math.random() * 4, Math.random() * 3, 0, Math.PI * 2); g.fill(); }
+    hair = null;
+  }
   if (hair !== null) {
     g.fillStyle = css(hair);
     g.fillRect(0, 0, 256, 30);                       // top of the head
     g.fillRect(112, 0, 144, 78); g.fillRect(0, 0, 16, 78);   // sides and back
     g.beginPath(); g.ellipse(cx, 30, 50, 9, 0, 0, Math.PI * 2); g.fill();   // fringe
+  }
+  if (bruise > 0 && expr !== 'scorched') {
+    const L0 = cx - 15, R0 = cx + 15;
+    const blot = (x, y, rx, ry, a, col = '90,30,90') => { const gr = g.createRadialGradient(x, y, 1, x, y, Math.max(rx, ry)); gr.addColorStop(0, `rgba(${col},${a})`); gr.addColorStop(1, `rgba(${col},0)`); g.fillStyle = gr; g.beginPath(); g.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); g.fill(); };
+    blot(R0 + 6, 72, 13, 10, 0.45, '120,60,90');                        // bruised cheek
+    if (bruise >= 2) { blot(L0, 59, 12, 10, 0.85, '55,20,60'); blot(cx + 2, 88, 7, 5, 0.5, '130,30,40'); }   // black eye, fat lip
+    if (bruise >= 3) { blot(R0, 59, 12, 10, 0.85, '55,20,60'); blot(L0 - 6, 74, 12, 11, 0.5, '110,70,40'); }  // second black eye, swelling
   }
   // ears
   g.fillStyle = 'rgba(0,0,0,.12)'; g.fillRect(14, 54, 6, 16); g.fillRect(108, 54, 6, 16);
@@ -103,6 +119,24 @@ function faceTex(skin, hair, expr) {
     g.moveTo(cx - 10, 87); g.lineTo(cx - 5, 85); g.lineTo(cx, 88); g.lineTo(cx + 5, 85); g.lineTo(cx + 10, 88); g.stroke();
     blood(cx + 9, 88, cx + 11, 104); blood(cx - 2, 75, cx - 3, 83, 2);
     g.fillStyle = 'rgba(140,200,255,.8)'; g.beginPath(); g.ellipse(cx + 30, 46, 2, 3.5, 0, 0, Math.PI * 2); g.fill();   // sweat
+  } else if (expr === 'choke') {
+    // eyes bulging, brows pinched up, mouth gaping with the tongue out
+    eye(L, 1.35, -0.5); eye(R, 1.35, -0.5); brow(L, -6, 2); brow(R, -6, 2);
+    g.fillStyle = '#2a0d0a'; g.beginPath(); g.ellipse(cx, 89, 10, 8, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#c0505a'; g.beginPath(); g.ellipse(cx, 96, 6, 7, 0, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = 'rgba(160,30,40,.6)'; g.lineWidth = 1; for (const ex of [L, R]) for (let i = 0; i < 3; i++) { g.beginPath(); g.moveTo(ex - 6, 57 + i); g.lineTo(ex - 2, 58); g.stroke(); }
+  } else if (expr === 'out') {
+    // knocked out: eyes shut, mouth hanging open
+    g.strokeStyle = LINE; g.lineWidth = 2.5;
+    for (const ex of [L, R]) { g.beginPath(); g.moveTo(ex - 6, 58); g.quadraticCurveTo(ex, 61, ex + 6, 58); g.stroke(); }
+    brow(L, 1, 1); brow(R, 1, 1);
+    g.fillStyle = '#2a0d0a'; g.beginPath(); g.ellipse(cx + 2, 88, 6, 4, 0.2, 0, Math.PI * 2); g.fill();
+    blood(cx + 6, 90, cx + 7, 97, 1.5);
+  } else if (expr === 'scorched') {
+    // lids burned away: staring whites, lipless grin of teeth
+    g.fillStyle = '#efe9da'; for (const ex of [L, R]) { g.beginPath(); g.ellipse(ex, 58, 7, 6, 0, 0, Math.PI * 2); g.fill(); g.fillStyle = '#3a2a20'; g.beginPath(); g.arc(ex, 58, 2.5, 0, Math.PI * 2); g.fill(); g.fillStyle = '#efe9da'; }
+    g.fillStyle = '#120806'; g.fillRect(cx - 14, 81, 28, 13);
+    g.fillStyle = '#e8dcc0'; for (let i = 0; i < 6; i++) { g.fillRect(cx - 13 + i * 4.5, 82, 3.5, 5); g.fillRect(cx - 13 + i * 4.5, 88, 3.5, 5); }
   } else {   // dead
     eye(L, 0.45, null); eye(R, 0.6, null);
     g.fillStyle = '#1c1410'; g.beginPath(); g.arc(L, 56, 2.5, 0, Math.PI); g.fill(); g.beginPath(); g.arc(R + 1, 56, 2.5, 0, Math.PI); g.fill();
@@ -110,8 +144,32 @@ function faceTex(skin, hair, expr) {
     g.fillStyle = '#2a0d0a'; g.beginPath(); g.ellipse(cx, 88, 7, 4.5, 0, 0, Math.PI * 2); g.fill();
     blood(cx - 6, 89, cx - 9, 108, 3); blood(cx + 1, 75, cx + 2, 84, 2); blood(cx - 3, 75, cx - 4, 82, 2);
   }
+  if (bruise >= 2 && expr !== 'scorched') {
+    // cuts and scabbed scars
+    g.strokeStyle = '#7a0c0c'; g.lineWidth = 1.6; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(cx + 22, 44); g.lineTo(cx + 30, 52); g.stroke();
+    g.beginPath(); g.moveTo(cx - 6, 92); g.lineTo(cx - 2, 96); g.stroke();
+    if (bruise >= 3) { g.beginPath(); g.moveTo(cx - 28, 40); g.lineTo(cx - 18, 46); g.lineTo(cx - 12, 44); g.stroke(); g.beginPath(); g.moveTo(cx + 4, 66); g.lineTo(cx + 9, 70); g.stroke(); }
+  }
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
   return faceCache[key] = t;
+}
+
+// a bare skull, wrapped round the head the same way as a face
+function skullTex() {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 128;
+  const g = c.getContext('2d'), cx = 64;
+  g.fillStyle = '#e4d8bc'; g.fillRect(0, 0, 256, 128);
+  for (let i = 0; i < 200; i++) { g.fillStyle = `rgba(120,100,70,${Math.random() * 0.25})`; g.fillRect(Math.random() * 256, Math.random() * 128, 2, 2); }
+  g.strokeStyle = 'rgba(110,95,70,.8)'; g.lineWidth = 1.2;   // sutures
+  g.beginPath(); g.moveTo(0, 22); for (let x = 0; x <= 256; x += 8) g.lineTo(x, 22 + (x % 16 ? 3 : -3)); g.stroke();
+  g.fillStyle = '#1a120c';
+  for (const ex of [cx - 16, cx + 16]) { g.beginPath(); g.ellipse(ex, 58, 10, 9, 0, 0, Math.PI * 2); g.fill(); }   // sockets
+  g.beginPath(); g.moveTo(cx, 66); g.lineTo(cx - 5, 78); g.lineTo(cx + 5, 78); g.closePath(); g.fill();          // nose hole
+  g.fillStyle = '#f2ead6'; for (let i = 0; i < 8; i++) { g.fillRect(cx - 16 + i * 4, 84, 3.2, 6); g.fillRect(cx - 16 + i * 4, 91, 3.2, 6); }
+  g.strokeStyle = '#3a2a1c'; g.lineWidth = 1; g.strokeRect(cx - 16, 84, 32, 13);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  return t;
 }
 
 // ---------------------------------------------------------------- wounds
@@ -144,6 +202,16 @@ const stainMat = decalMat(decalTex(g => {
   g.fillStyle = 'rgba(100,0,0,.85)'; g.fillRect(28, 26, 5, 34); g.fillRect(36, 28, 3, 22);
 }), -3);
 const MAX_WOUNDS = 36;
+const boneMat = new THREE.MeshLambertMaterial({ color: 0xe4d8bc });
+const CHAR = new THREE.Color(0x1c120d), RAW = new THREE.Color(0x5a1a12);
+// ragged, charred cloth once it's been burning a while
+const tatterTex = (base) => texOf(64, 64, (g, w, h) => {
+  g.fillStyle = base; g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 9; i++) { const x = Math.random() * w, y = Math.random() * h, r = 4 + Math.random() * 9;
+    g.fillStyle = '#e8792b'; g.beginPath(); g.arc(x, y, r + 1.5, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#4a1a10'; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill(); }
+  for (let i = 0; i < 40; i++) { g.fillStyle = 'rgba(0,0,0,.5)'; g.fillRect(Math.random() * w, Math.random() * h, 3, 1 + Math.random() * 5); }
+});
 
 // Layered wounds: 1 = through the skin, 2 = into muscle, 3 = down to bone.
 const fleshMats = [
@@ -202,12 +270,13 @@ const waistTex = texOf(256, 136, (g) => {
   blob(g, 138, 80, 5.5, 5.5, '#c01818', '#6e0a0a'); blob(g, 118, 80, 5.5, 5, '#3a4a9a', '#1f2a5a'); // aorta, vena cava
 });
 // A body cut top to bottom, seen from the side. Left of the picture is the back, right is the front.
-const sideTex = texOf(128, 368, (g, w, h) => {
+const drawSide = heart => (g, w, h) => {
   g.fillStyle = '#3a0808'; g.fillRect(0, 0, w, h);
   for (const [x, c] of [[0, '#d9a98a'], [4, '#e9cf7a'], [9, '#8a1c1c']]) { g.fillStyle = c; g.fillRect(x, 0, 6, h); g.fillRect(w - x - 6, 0, 6, h); }
   blob(g, 70, 84, 30, 62, '#d9a0a8', '#b07a84');   // lung
   for (let i = 0; i < 40; i++) blob(g, 46 + Math.random() * 48, 30 + Math.random() * 108, 2, 2, 'rgba(160,90,100,.6)');
-  blob(g, 84, 108, 18, 23, '#9c1a1a', '#5c0a0a'); blob(g, 88, 104, 7, 9, '#6e0a0a');   // heart
+  if (heart) { blob(g, 84, 108, 18, 23, '#9c1a1a', '#5c0a0a'); blob(g, 88, 104, 7, 9, '#6e0a0a'); }   // heart (unless it's been ripped out)
+  else blob(g, 84, 108, 18, 22, '#1a0303', '#5c0a0a');
   g.strokeStyle = '#7a1414'; g.lineWidth = 5; g.beginPath(); g.moveTo(22, 168); g.quadraticCurveTo(70, 140, 108, 164); g.stroke();   // diaphragm
   blob(g, 74, 190, 34, 22, '#6b2a1a', '#4a1a10');  // liver
   blob(g, 80, 226, 22, 16, '#c97a84', '#9a5560');  // stomach
@@ -218,7 +287,8 @@ const sideTex = texOf(128, 368, (g, w, h) => {
   for (let y = 8; y < 322; y += 20) { g.fillStyle = '#efe6d0'; g.fillRect(21, y, 17, 13); g.fillStyle = '#8fa3b0'; g.fillRect(21, y + 13, 17, 4); g.fillStyle = '#efe6d0'; g.fillRect(8, y + 3, 8, 6); }
   for (let y = 26; y < 160; y += 18) blob(g, 106, y, 4.5, 4.5, '#efe6d0', '#b8ab8a');             // ribs, cut end-on
   g.fillStyle = '#efe6d0'; g.fillRect(109, 40, 5, 96);                                             // sternum
-});
+};
+const sideTex = texOf(128, 368, drawSide(true)), sideTexNH = texOf(128, 368, drawSide(false));
 const sideTexFlip = sideTex.clone(); sideTexFlip.wrapS = THREE.RepeatWrapping; sideTexFlip.repeat.x = -1; sideTexFlip.offset.x = 1; sideTexFlip.needsUpdate = true;
 // A head cut down the middle, seen from the side. Left is the back of the head, right is the face.
 const brainTex = texOf(128, 128, (g) => {
@@ -233,7 +303,16 @@ const brainTex = texOf(128, 128, (g) => {
   g.fillStyle = '#efe6d0'; g.fillRect(78, 112, 34, 7); g.fillRect(104, 92, 8, 5); g.fillRect(104, 99, 8, 4);   // jaw, teeth
 });
 const capMat = map => new THREE.MeshBasicMaterial({ map, transparent: true, side: THREE.DoubleSide });
+const flipTex = t => { const f = t.clone(); f.wrapS = THREE.RepeatWrapping; f.repeat.x = -1; f.offset.x = 1; f.needsUpdate = true; return f; };
 const waistMat = capMat(waistTex), sideMatR = capMat(sideTex), sideMatL = capMat(sideTexFlip), brainMatR = capMat(brainTex);
+const sideMatRNH = capMat(sideTexNH), sideMatLNH = capMat(flipTex(sideTexNH));
+// where the heart was torn out through the ribs
+const chestHoleMat = decalMat(decalTex(g => {
+  g.fillStyle = '#d9967f'; g.beginPath(); for (let i = 0; i <= 18; i++) { const a = i / 18 * Math.PI * 2, r = 27 + Math.random() * 4; g.lineTo(32 + Math.cos(a) * r, 32 + Math.sin(a) * r); } g.fill();
+  g.fillStyle = '#8f1414'; g.beginPath(); g.arc(32, 32, 24, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#140000'; g.beginPath(); g.arc(32, 33, 18, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#efe6cf'; for (const y of [20, 30, 40]) { g.fillRect(12, y, 15, 4); g.fillRect(37, y + 1, 15, 4); }   // snapped ribs
+}), -8);
 const brainTexFlip = brainTex.clone(); brainTexFlip.wrapS = THREE.RepeatWrapping; brainTexFlip.repeat.x = -1; brainTexFlip.offset.x = 1; brainTexFlip.needsUpdate = true;
 const brainMatL = capMat(brainTexFlip);
 const waistCapGeo = new THREE.PlaneGeometry(0.4, 0.21), sideCapGeo = new THREE.PlaneGeometry(0.21, 0.6), brainCapGeo = new THREE.CircleGeometry(0.113, 20);
@@ -276,8 +355,14 @@ const coreMat = new THREE.MeshLambertMaterial({ map: texOf(128, 64, (g, w, h) =>
 const pieceDir = (b, q, out) => { const th = (BANDS[b] + BANDS[b + 1]) / 2, ph = (q + 0.5) * Math.PI / 2; return out.set(-Math.cos(ph) * Math.sin(th), Math.cos(th), Math.sin(ph) * Math.sin(th)); };
 
 export class Dummy {
+  // the game sets this to play a voice line: (dummy, event)
+  static say(d, ev) { Dummy.onSay?.(d, ev); }
+  // what the gore setting allows
+  static gore = { sever: true, wounds: true, guts: true };
   constructor(world, scene, fx, x, z, yaw, opts = {}) {
     this.world = world; this.scene = scene; this.fx = fx;
+    const sc = this.s = opts.scale ?? 1;
+    this.type = opts.type ?? 'dummy'; this.armor = opts.armor ?? 0; this.dmgToPlayer = opts.dmg ?? 10;
     this.root = { x, z }; this.yaw = yaw;
     this.alive = true; this.hp = opts.hp ?? 100; this.state = 'stand';
     this.aggro = !!opts.aggro; this.speed = opts.speed ?? 1; this.gone = false;
@@ -285,7 +370,9 @@ export class Dummy {
     this.phase = Math.random() * 6; this.moveAmt = 0; this.time = Math.random() * 10;
     this.wanderT = 0; this.wanderYaw = yaw; this.wandering = false;
     this.sliceCd = 0;
-    this.gutted = false; this.guts = []; this.organs = []; this.split = null; this.halves = [];
+    this.gutted = false; this.guts = [];
+    this.heldBy = null; this.choked = false; this.chokeT = 0; this.outT = 0; this.heartOut = false; this.cleaved = false;
+    this.burnT = 0; this.fireT = 0; this.skeleton = false; this.bruise = 0; this.organs = []; this.split = null; this.halves = [];
     this.headPieces = null; this.headL = null; this.woundCount = new Map();
     this.maxHp = this.hp; this.hurtT = 0; this.angry = false; this.expr = ''; this.clutch = null; this.wounds = [];
     this.onDeath = null;
@@ -294,25 +381,25 @@ export class Dummy {
     this.p = {}; this.all = []; this.sticks = [];
     for (const k in REST) {
       const [rx, ry, rz] = REST[k];
-      const p = new Particle(x + rx * c + rz * s, ry, z - rx * s + rz * c, RADIUS[k] ?? 0.05, TORSO.includes(k) ? 0.6 : 1);
+      const p = new Particle(x + (rx * c + rz * s) * sc, ry * sc, z + (-rx * s + rz * c) * sc, (RADIUS[k] ?? 0.05) * sc, TORSO.includes(k) ? 0.6 : 1);
       p.body = this; p.name = k;
       p.noSelf = k === 'head' || TORSO.includes(k);   // these sit inside the body's own collision shapes
       this.p[k] = p; this.all.push(p); world.add(p);
     }
     const stick = (a, b, opts) => { const st = world.stick(this.p[a], this.p[b], { ...opts, body: this }); this.sticks.push(st); return st; };
     for (let i = 0; i < TORSO.length; i++) for (let j = i + 1; j < TORSO.length; j++) stick(TORSO[i], TORSO[j]);
-    for (const [a, b, len] of LIMITS) stick(a, b, { len, min: true });
+    for (const [a, b, len] of LIMITS) stick(a, b, { len: len * sc, min: true });
 
     this.group = new THREE.Group(); scene.add(this.group);
     const shirt = opts.shirt ?? SHIRTS[Math.floor(Math.random() * SHIRTS.length)], skin = opts.skin ?? SKIN;
     this.bones = []; this.bone = {};
     for (const [name, a, b, r, hp, leg] of BONES) {
       const st = stick(a, b);
-      const bone = { name, a: this.p[a], b: this.p[b], r, hp: hp * (opts.tough ?? 1), leg, stick: st, severed: false, mesh: null };
+      const bone = { name, a: this.p[a], b: this.p[b], r: r * sc, hp: hp * (opts.tough ?? 1), leg, stick: st, severed: false, mesh: null };
       if (name !== 'head') {
         const col = leg ? PANTS : (name.includes('Upper') ? shirt : skin);
         bone.len = st.len;
-        bone.mesh = new THREE.Mesh(capsule(r, st.len), new THREE.MeshLambertMaterial({ color: col }));
+        bone.mesh = new THREE.Mesh(capsule(r * sc, st.len), new THREE.MeshLambertMaterial({ color: col }));
         this.group.add(bone.mesh);
       }
       this.bones.push(bone); this.bone[name] = bone;
@@ -321,14 +408,38 @@ export class Dummy {
     this.hair = opts.hair !== undefined ? opts.hair : HAIR[Math.floor(Math.random() * HAIR.length)];
     this.headMesh = new THREE.Mesh(headGeo, new THREE.MeshLambertMaterial({ map: faceTex(skin, this.hair, 'neutral') }));
     this.torsoMesh = new THREE.Mesh(torsoGeo, new THREE.MeshLambertMaterial({ color: shirt }));
-    this.group.add(this.headMesh, this.torsoMesh);
+    this.headMesh.scale.setScalar(sc); this.torsoMesh.scale.setScalar(sc);
+    // a neck you can see (and get a hand round)
+    this.neckMesh = new THREE.Mesh(capsule(0.046 * sc, 0.1 * sc), new THREE.MeshLambertMaterial({ color: skin }));
+    this.group.add(this.headMesh, this.torsoMesh, this.neckMesh);
+    this.cloth = [this.torsoMesh, ...this.bones.filter(b => b.mesh && (b.leg || b.name.includes('Upper'))).map(b => b.mesh)];
+    this.skinParts = [this.neckMesh, ...this.bones.filter(b => b.mesh && !b.leg && !b.name.includes('Upper')).map(b => b.mesh)];
+    if (opts.armor) {
+      // riot gear: helmet with a visor and a padded vest
+      const navy = new THREE.MeshLambertMaterial({ color: 0x1c2638 });
+      const helm = new THREE.Mesh(new THREE.SphereGeometry(0.128, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.52), navy);
+      const visor = new THREE.Mesh(new THREE.SphereGeometry(0.131, 14, 6, Math.PI * 0.18, Math.PI * 0.64, Math.PI * 0.3, Math.PI * 0.22), new THREE.MeshLambertMaterial({ color: 0x0a0e14, transparent: true, opacity: 0.6 }));
+      const vest = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.48, 0.25), navy); vest.position.y = 0.03;
+      this.headMesh.add(helm, visor); this.torsoMesh.add(vest);
+    }
+    if (opts.bomb) {
+      // a vest of dynamite
+      const strap = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.2, 0.23), new THREE.MeshLambertMaterial({ color: 0x4a3a24 })); strap.position.y = -0.05;
+      this.torsoMesh.add(strap);
+      for (let i = 0; i < 6; i++) { const st = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.18, 8), new THREE.MeshLambertMaterial({ color: 0xb3261e })); st.position.set(-0.15 + i * 0.06, -0.05, 0.125); strap.parent.add(st); }
+      this.bombLight = new THREE.Mesh(new THREE.SphereGeometry(0.015, 6, 4), new THREE.MeshBasicMaterial({ color: 0x330000 })); this.bombLight.position.set(0, 0.06, 0.13); this.torsoMesh.add(this.bombLight);
+    }
     this.stumps = [];
     // solid shapes: trunk, head and every limb, against outsiders and against the body's own loose parts
     const P = this.p;
-    this.torsoCaps = [{ a: P.pelvis, b: P.neck, r: 0.115, self: true }, { a: P.lSh, b: P.lHip, r: 0.075, self: true }, { a: P.rSh, b: P.rHip, r: 0.075, self: true }];
-    this.headCap = { a: P.head, b: P.head, r: 0.105, self: true };
+    this.torsoCaps = [{ a: P.pelvis, b: P.neck, r: 0.115 * sc, self: true }, { a: P.lSh, b: P.lHip, r: 0.075 * sc, self: true }, { a: P.rSh, b: P.rHip, r: 0.075 * sc, self: true }];
+    this.headCap = { a: P.head, b: P.head, r: 0.105 * sc, self: true };
     this.solid = { owner: this, center: P.chest, caps: [...this.torsoCaps, this.headCap, ...this.bones.filter(b => b.name !== 'head').map(b => ({ bone: b, r: b.r, self: true }))] };
     world.bodies.push(this.solid);
+    if (opts.legless) {   // crawlers come already missing their legs
+      this.sever(this.bone.lThigh); this.sever(this.bone.rThigh);
+      this.bleeding = 0; this.state = 'crawl';
+    }
     for (const b of this.bones) if (b.name !== 'head') world.rods.push({ bone: b, r: b.r, body: this });
     this.sync();
   }
@@ -339,7 +450,31 @@ export class Dummy {
   tick(h, player, hostile) {
     this.time += h;
     this.sliceCd -= h;
+    // in someone's hand: steady it instead of letting it swing round and round
+    if (this.heldBy) for (const p of this.all) if (!p.pinned) p.prev.lerp(p.pos, 0.12);
+    if (!this.choked) this.chokeT = Math.max(0, this.chokeT - h * 0.5);
     if (!this.alive) return;
+    if (this.state === 'out') {
+      // passed out; comes round after ten seconds
+      if ((this.outT -= h) <= 0) { this.state = 'down'; this.downT = 0.6; Dummy.say(this, 'wake'); }
+      return;
+    }
+    if (this.heldBy) {
+      this.stun = 0.5;
+      if (this.choked) {
+        // hands up to claw at the hand round their throat
+        this.chokeT += h;
+        if (this.chokeT > 1 && Math.random() < h * 0.6) Dummy.say(this, 'choke');
+        for (const k of ['lHand', 'rHand']) {
+          const p = this.p[k]; if (p.detached || p.pinned) continue;
+          const tx = this.heldBy.pos.x - p.pos.x, ty = this.heldBy.pos.y - 0.04 - p.pos.y, tz = this.heldBy.pos.z - p.pos.z;
+          p.pos.x += tx * 0.22; p.pos.y += ty * 0.22; p.pos.z += tz * 0.22;
+          p.prev.x += tx * 0.17; p.prev.y += ty * 0.17; p.prev.z += tz * 0.17;
+        }
+        if (this.chokeT > 4) { this.state = 'out'; this.outT = 10; this.chokeT = 0; Dummy.say(this, 'passout'); }
+      }
+      return;
+    }
     if (this.bleeding) { this.hp -= this.bleeding * 6 * h; if (this.hp <= 0) return this.die(); }
     this.stun = Math.max(0, this.stun - h * 1.4);
     this.hurtT -= h; this.angry = hostile;
@@ -376,7 +511,8 @@ export class Dummy {
     // standing / walking
     this.rise = Math.min(1, this.rise + h * 0.9);
     let speed = 0, want = this.yaw;
-    if (hostile) { want = Math.atan2(dx, dz); speed = dist > 0.95 ? 1.15 * this.speed : 0; }
+    if (this.panic) { if (Math.random() < h * 2) this.wanderYaw = Math.random() * 6.28; want = this.wanderYaw; speed = 2.0; }
+    else if (hostile) { want = Math.atan2(dx, dz); speed = dist > (this.gunner ? 5 : 0.95 * this.s) ? 1.15 * this.speed : 0; }
     else {
       this.wanderT -= h;
       if (this.wanderT <= 0) { this.wanderT = 2 + Math.random() * 4; this.wandering = Math.random() < 0.5; this.wanderYaw = Math.random() * Math.PI * 2; }
@@ -414,6 +550,9 @@ export class Dummy {
         case 'rElbow': if (hostile) { x = 0.22; y = 1.36; z = 0.24; } break;
         case 'head': case 'neck': case 'chest': x += Math.sin(this.time * 1.3) * 0.012; if (hostile) z += 0.05; break;
       }
+      if (this.panic && (name.endsWith('Hand') || name.endsWith('Elbow'))) { y += 0.35 + Math.sin(this.time * 14 + x * 9) * 0.15; x *= 1.4; }   // on fire: arms flailing
+      if (this.gunner && hostile && (name === 'rHand' || name === 'rElbow')) { x = name === 'rHand' ? 0.12 : 0.18; y = 1.42; z = name === 'rHand' ? 0.55 : 0.3; }   // gun arm out
+      x *= this.s; y *= this.s; z *= this.s;
       let kk = (name.endsWith('Hand') || name.endsWith('Elbow')) ? k * 0.5 : k;
       if (this.clutch && name === this.clutch.hand.replace('Hand', 'Elbow')) kk *= 0.25;
       const ex = (this.root.x + x * c + z * s - p.pos.x) * kk, ey = (y - p.pos.y) * kk, ez = (this.root.z - x * s + z * c - p.pos.z) * kk;
@@ -425,11 +564,12 @@ export class Dummy {
   }
 
   knockdown(seconds) {
-    if (!this.alive || this.state === 'crawl') return;
+    if (!this.alive || this.state === 'crawl' || this.state === 'out') return;
     this.state = 'down'; this.downT = Math.max(this.downT, seconds);
   }
   die() {
     if (!this.alive) return;
+    if (this.alive && !this.split && !this.headGone && !this.bone.head.severed) Dummy.say(this, this.fireT > 0 ? 'burnDie' : 'die');
     this.alive = false; this.state = 'dead';
     if (this.clutch) { this.p[this.clutch.hand].ghost = false; this.clutch = null; }
     this.onDeath?.(this);
@@ -450,11 +590,12 @@ export class Dummy {
       this.hp -= (part.name === 'head' ? 60 : 6) * dmg;
       if (part.mesh) this.tint(part.mesh); else this.tint(this.headMesh);
       if (part.name === 'head') {
-        if (opts.bullet) { if (opts.big) this.explodeHead(); else this.breakHead(point, opts.dir); }
+        if (opts.bullet) { if (opts.big) this.explodeHead(); else { this.fx.emitter(this.p.head, 4, 30); this.bleeding += 0.4; } }
         else if (part.severed) this.explodeHead();
         else if (part.hp <= 0) this.sever(part);
       } else if (part.hp <= 0 && !part.severed) this.sever(part);
     }
+    if (this.alive && this.hp > 0) Dummy.say(this, dmg >= 2 || this.hp < this.maxHp * 0.35 ? 'hurtBad' : 'hurt');
     if (this.hp <= 0) this.die();
   }
   // a blade pushed in: big damage, no dismemberment
@@ -464,6 +605,7 @@ export class Dummy {
     if (!part) { for (const k of ['chest', 'pelvis']) P[k].push(dv, h); this.tint(this.torsoMesh); this.hp -= 45; }
     else { part.a.push(dv, h); part.b.push(dv, h); this.tint(part.mesh ?? this.headMesh); this.hp -= part.name === 'head' ? 400 : 12; }
     this.bleeding += 0.5;
+    if (this.hp > 0) Dummy.say(this, 'stabbed');
     if (this.hp <= 0) this.die();
   }
   // Wounds are drawn as decals now; cloth only darkens slightly, and only on
@@ -474,6 +616,7 @@ export class Dummy {
   // torso; point / dir are in world space; kind = 'bullet' | 'stab' | 'slash'.
   // cluster = how many shotgun pellets landed together: they tear out one ragged chunk
   addWound(bone, point, dir, kind, big = false, cluster = 1) {
+    if (!Dummy.gore.wounds) { if (this.alive) this.bleeding += 0.05; return; }
     const head = bone?.name === 'head';
     const mesh = bone ? (head ? this.headMesh : bone.mesh) : this.torsoMesh;
     if (!mesh.visible) return;
@@ -486,7 +629,7 @@ export class Dummy {
     this.woundCount.set(area, hits);
     const depth = Math.min(3, hits + (big ? 1 : 0) + (cluster >= 3 ? 1 : 0));
     // one decal on the side the hit came from, and for bullets an exit wound opposite
-    for (const side of kind === 'bullet' && !head ? [-1, 1] : [-1]) {
+    for (const side of kind === 'bullet' ? [-1, 1] : [-1]) {
       const pos = new THREE.Vector3();
       if (head) { wn.copy(ld).multiplyScalar(side * 0.75).addScaledVector(t1.copy(lp).normalize(), 0.25).normalize(); pos.copy(wn).multiplyScalar(0.1175); }
       else if (bone) {
@@ -505,7 +648,10 @@ export class Dummy {
       const layer = Math.min(3, depth + (exit ? 1 : 0));
       const d = new THREE.Mesh(woundGeo, kind === 'bullet' ? fleshMats[layer - 1] : slitMat);
       d.position.copy(pos); d.quaternion.setFromUnitVectors(Z_AXIS, wn);
-      if (kind === 'bullet') {
+      if (kind === 'bullet' && head) {
+        // through the skull: a small round hole in, a bigger one out the back
+        d.material = fleshMats[2]; d.scale.setScalar(exit ? 0.042 : 0.024);
+      } else if (kind === 'bullet') {
         d.scale.setScalar(FLESH_SIZE[layer - 1] * (head ? 0.8 : 1) * (cluster > 1 ? 1.4 + Math.min(cluster, 7) * 0.2 : 1) * (cluster > 1 && bone ? 0.7 : 1));
         d.rotateZ(Math.random() * 6.28);
         if (cluster > 1) d.scale.x *= 0.8 + Math.random() * 0.5;   // a torn chunk, not a neat circle
@@ -517,6 +663,12 @@ export class Dummy {
       d.renderOrder = 2;
       mesh.add(d);
       const w = { decal: d, stain: null, born: this.time };
+      if (head && kind === 'bullet' && !exit) {
+        // a run of blood down from the hole
+        const run = new THREE.Mesh(woundGeo, stainMat);
+        run.position.copy(pos).addScaledVector(wn, -0.0005); run.position.y -= 0.022; run.quaternion.copy(d.quaternion);
+        run.scale.set(0.035, 0.07, 1); run.renderOrder = 1; mesh.add(run); w.stain = run;
+      }
       if (!bone) {
         // blood soaks out through the shirt and runs down from the hole
         const st = new THREE.Mesh(woundGeo, stainMat);
@@ -555,7 +707,7 @@ export class Dummy {
   // Belly opened up: loops of intestine spill out and hang from the wound.
   // They're Verlet ropes pinned to the hips, so they swing, drag and can be grabbed.
   disembowel(point) {
-    if (this.gutted || this.split) return false;
+    if (this.gutted || this.split || this.skeleton || !Dummy.gore.guts) return false;
     const P = this.p, w = this.world;
     t1.subVectors(P.rSh.pos, P.lSh.pos).normalize();          // body right
     t2.subVectors(P.neck.pos, P.pelvis.pos).normalize();      // body up
@@ -589,6 +741,7 @@ export class Dummy {
     this.fx.spray(point, t3.multiplyScalar(front), 40, 3.5, 0.9);
     this.fx.emitter(ends[0], 7, 30); this.fx.emitter(P.pelvis, 5, 25);
     this.hp -= 35; this.bleeding += 1.5; this.hurtT = 2.5;
+    if (this.hp > 0) Dummy.say(this, 'gutted');
     if (this.hp <= 0) this.die(); else this.knockdown(2.5);
     return true;
   }
@@ -688,7 +841,7 @@ export class Dummy {
 
   // Cut through at the waist: chest, arms and head come away from hips and legs.
   splitWaist(point) {
-    if (this.split) return false;
+    if (this.split || !Dummy.gore.sever) return false;
     if (point) { const hgt = this.heightOf(point); if (hgt < -0.02 || hgt > 0.36) return false; }
     const P = this.p;
     this._frame();
@@ -732,8 +885,11 @@ export class Dummy {
   }
 
   // Cut from the crown down through the groin: a left half and a right half.
-  splitVertical() {
-    if (this.split) return false;
+  // depth: how far down the cut went (height above the pelvis); short of the
+  // crotch it only cleaves the head and chest
+  splitVertical(depth) {
+    if (this.split || !Dummy.gore.sever) return false;
+    if (depth !== undefined && depth > 0.14 * this.s) return this.cleave(depth);
     const P = this.p;
     this._frame();
     const right = t1.clone(), up = t2.clone();
@@ -751,8 +907,8 @@ export class Dummy {
     this.solid.caps.push({ a: P.rSh, b: P.rHip, r: 0.08, self: true });
     this.world.bodies.push({ owner: this, center: cL, caps: [{ a: P.lSh, b: P.lHip, r: 0.08, self: true }, ...leftSide] });
     this.torsoMesh.visible = false;
-    const halfR = this._halfMesh(halfGeo, sideCapGeo, sideMatR, [-0.101, 0, 0], [0, -Math.PI / 2, 0]);
-    const halfL = this._halfMesh(halfGeo, sideCapGeo, sideMatL, [0.101, 0, 0], [0, Math.PI / 2, 0]);
+    const halfR = this._halfMesh(halfGeo, sideCapGeo, this.heartOut ? sideMatRNH : sideMatR, [-0.101, 0, 0], [0, -Math.PI / 2, 0]);
+    const halfL = this._halfMesh(halfGeo, sideCapGeo, this.heartOut ? sideMatLNH : sideMatL, [0.101, 0, 0], [0, Math.PI / 2, 0]);
     this.halves.push(() => {
       t2.subVectors(P.neck.pos, P.pelvis.pos).normalize(); t1.subVectors(P.rSh.pos, P.neck.pos);
       t3.crossVectors(t1, t2).normalize(); t1.crossVectors(t2, t3);
@@ -765,22 +921,10 @@ export class Dummy {
       halfL.position.addVectors(nL.pos, pL.pos).multiplyScalar(0.5).addScaledVector(t1, -0.1).addScaledVector(t3, 0.02);
     });
     // the head goes too, if it's still on
-    const hb = this.bone.head;
-    if (!this.headGone && !hb.severed) {
-      this.crackHead();
-      const hL = this._extra('headL', P.head.pos.clone().addScaledVector(right, -0.02), 0.09, 1);
-      this._link(hL, nL); this._link(hL, cL); this._link(hL, P.lSh);
-      const meshL = new THREE.Mesh(EMPTY_GEO, this.headMesh.material);
-      for (const m of [...this.headPieces]) if (m.userData.q === 0 || m.userData.q === 3) meshL.add(m);
-      this.headCore.geometry = coreHalfGeo[0];
-      meshL.add(new THREE.Mesh(coreHalfGeo[1], coreMat));
-      const capR = new THREE.Mesh(brainCapGeo, brainMatR); capR.rotation.y = -Math.PI / 2; capR.position.x = -0.001; this.headMesh.add(capR);
-      const capL = new THREE.Mesh(brainCapGeo, brainMatL); capL.rotation.y = Math.PI / 2; capL.position.x = 0.001; meshL.add(capL);
-      this.group.add(meshL);
-      this.headL = { mesh: meshL, head: hL, neck: nL, sh: P.lSh };
-    }
+    if (this.headL) { this.headL.mesh.visible = false; this.headL = null; }   // already split by an earlier cut
+    this._headHalves(nL, cL, P.lSh, right);
     const mid = P.chest.pos.clone();
-    this._spill(['heart', 'lung', 'lung', 'liver', 'stomach', 'kidney', 'kidney'], mid);
+    this._spill([...(this.heartOut ? [] : ['heart']), 'lung', 'lung', 'liver', 'stomach', 'kidney', 'kidney'], mid);
     this._rope(P.pelvis.pos.clone().addScaledVector(up, 0.15), 7, null); this._rope(P.pelvis.pos.clone().addScaledVector(up, 0.15), 6, pL);
     for (const p of this.all) {
       if (p.pinned) continue;
@@ -793,8 +937,121 @@ export class Dummy {
     return true;
   }
 
+  // Punched hard in the chest: the heart comes out in the fist. Returns the heart.
+  ripHeart() {
+    if (this.heartOut || this.split || this.skeleton || !Dummy.gore.guts) return null;
+    this.heartOut = true;
+    const P = this.p;
+    this._frame();
+    const at = P.chest.pos.clone().addScaledVector(t3, 0.12 * this.s);
+    const [, r, sc] = ORGANS.heart;
+    const heart = this._extra('organ', at, r, 1.2);
+    const mesh = new THREE.Mesh(organGeo, organMats.heart); mesh.scale.set(r * sc[0], r * sc[1], r * sc[2]);
+    this.group.add(mesh); this.organs.push({ p: heart, mesh });
+    const hole = new THREE.Mesh(woundGeo, chestHoleMat);
+    hole.position.set(-0.03, 0.08, 0.108); hole.scale.setScalar(0.15); hole.renderOrder = 2; this.torsoMesh.add(hole);
+    this.fx.spray(at, t3, 50, 4, 0.9); this.fx.emitter(P.chest, 8, 45); this.fx.emitter(heart, 3, 20);
+    Dummy.say(this, 'heart');
+    this.bleeding += 3; this.hp = 0; this.die();
+    return heart;
+  }
+
+  // both halves of the head, the left half on its own particle
+  _headHalves(neckP, chestP, shP, right) {
+    const P = this.p, hb = this.bone.head;
+    if (this.headGone || hb.severed) return;
+    this.crackHead();
+    const hL = this._extra('headL', P.head.pos.clone().addScaledVector(right, -0.02), 0.09, 1);
+    this._link(hL, neckP); this._link(hL, chestP); this._link(hL, shP);
+    const meshL = new THREE.Mesh(EMPTY_GEO, this.headMesh.material);
+    meshL.scale.setScalar(this.s);
+    for (const m of [...this.headPieces]) if (m.userData.q === 0 || m.userData.q === 3) meshL.add(m);
+    this.headCore.geometry = coreHalfGeo[0];
+    meshL.add(new THREE.Mesh(coreHalfGeo[1], coreMat));
+    const capR = new THREE.Mesh(brainCapGeo, brainMatR); capR.rotation.y = -Math.PI / 2; capR.position.x = -0.001; this.headMesh.add(capR);
+    const capL = new THREE.Mesh(brainCapGeo, brainMatL); capL.rotation.y = Math.PI / 2; capL.position.x = 0.001; meshL.add(capL);
+    this.group.add(meshL);
+    this.headL = { mesh: meshL, head: hL, neck: neckP, sh: shP };
+    return hL;
+  }
+  // A downward cut that stopped short of the crotch: the head comes apart and the
+  // chest is laid open only as far as the blade went. depth = height above the pelvis.
+  cleave(depth) {
+    if (this.split || this.cleaved || !Dummy.gore.sever) return false;
+    this.cleaved = true;
+    const P = this.p;
+    this._frame();
+    const right = t1.clone(), up = t2.clone();
+    const hL = this._headHalves(P.neck, P.chest, P.lSh, right);
+    if (hL) {
+      // let the two halves fall apart
+      this.sticks.push(this.world.stick(hL, P.head, { len: 0.1 * this.s, min: true, body: this }));
+      hL.push(w1.copy(right).multiplyScalar(-1.2), this.world.dt); P.head.push(w1.copy(right).multiplyScalar(1.2), this.world.dt);
+    }
+    const top = 0.52 * this.s, len = Math.max(0, top - depth);
+    if (len > 0.04 && this.torsoMesh.visible) {
+      const gash = new THREE.Mesh(woundGeo, slitMat);
+      gash.position.set(0, 0.27 - len / this.s / 2, 0.109); gash.scale.set(0.07, len / this.s, 1); gash.renderOrder = 2; this.torsoMesh.add(gash);
+      const soak = new THREE.Mesh(woundGeo, stainMat);
+      soak.position.copy(gash.position); soak.position.z -= 0.001; soak.position.y -= 0.03; soak.scale.set(0.16, len / this.s * 1.3, 1); soak.renderOrder = 1; this.torsoMesh.add(soak);
+      this.fx.emitter(P.chest, 6, 40);
+    }
+    this.fx.spray(P.head.pos, up, 50, 4, 1.2); this.fx.emitter(P.neck, 6, 40);
+    this.bleeding += 2; this.hp = 0; this.die();
+    return true;
+  }
+
+  // ---- fire ----------------------------------------------------------------
+  ignite() {
+    if (this.skeleton) return;
+    if (this.fireT <= 0 && this.alive) Dummy.say(this, 'burn');
+    this.fireT = 4;
+  }
+  // called every frame with simulated seconds; returns true while it's alight
+  burn(sdt) {
+    if (this.fireT <= 0) { this.panic = false; return false; }
+    this.fireT -= sdt; this.burnT += sdt;
+    if (this.alive) {
+      this.hp -= 9 * sdt; this.panic = this.state === 'stand';
+      if (Math.random() < sdt * 0.8) Dummy.say(this, 'burning');
+      if (this.hp <= 0) this.die();
+    }
+    // clothes go dark and ragged, skin chars
+    const k = Math.min(1, this.burnT / 5);
+    for (const m of this.cloth) {
+      m.material.color.lerp(CHAR, sdt * 0.4);
+      if (this.burnT > 2.5 && !m.userData.tattered) { m.userData.tattered = true; m.material.map = tatterTex('#' + m.material.color.getHexString()); m.material.color.set(0xffffff).lerp(CHAR, 0.3); m.material.needsUpdate = true; }
+    }
+    for (const m of this.skinParts) m.material.color.lerp(k < 0.6 ? RAW : CHAR, sdt * 0.35);
+    if (this.burnT > 8) this.skeletonize();
+    return true;
+  }
+  // burned long enough: nothing left but bone
+  skeletonize() {
+    if (this.skeleton) return;
+    this.skeleton = true; this.bleeding = 0; this.fireT = Math.min(this.fireT, 1.5);
+    for (const w of this.wounds) { w.decal.removeFromParent(); w.stain?.removeFromParent(); }
+    this.wounds.length = 0;
+    for (const b of this.bones) if (b.mesh) { b.mesh.geometry = capsule(0.018 * this.s, b.len ?? 0.3); b.mesh.material = boneMat; }
+    this.neckMesh.geometry = capsule(0.02 * this.s, 0.1 * this.s); this.neckMesh.material = boneMat;
+    for (const g of this.guts) g.mesh.visible = false;
+    for (const o of this.organs) o.mesh.visible = false;
+    if (this.headPieces) for (const m of this.headPieces) m.visible = true;
+    if (this.headCore) this.headCore.visible = false;
+    // ribcage, spine and pelvis instead of the torso
+    const cage = new THREE.Group();
+    for (let i = 0; i < 9; i++) { const v = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.045, 0.04), boneMat); v.position.set(0, -0.26 + i * 0.065, -0.07); cage.add(v); }
+    for (let i = 0; i < 6; i++) { const rib = new THREE.Mesh(new THREE.TorusGeometry(0.15 - i * 0.008, 0.009, 4, 14, Math.PI * 1.7), boneMat); rib.rotation.set(Math.PI / 2, 0, Math.PI * 1.15); rib.scale.set(1, 0.68, 1); rib.position.set(0, 0.2 - i * 0.055, 0); cage.add(rib); }
+    const pelvis = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.025, 5, 12), boneMat); pelvis.rotation.x = Math.PI / 2; pelvis.scale.set(1, 0.6, 1); pelvis.position.y = -0.27; cage.add(pelvis);
+    this.torsoMesh.add(cage);
+    this.torsoMesh.material = new THREE.MeshBasicMaterial({ visible: false });
+    for (const ch of [...this.torsoMesh.children]) if (ch !== cage) ch.visible = false;
+    for (const ch of [...this.headMesh.children]) if (ch.material === coreMat || ch.material?.color?.getHex?.() === 0x1c2638) ch.visible = false;
+    if (this.alive) this.die();
+  }
+
   sever(bone) {
-    if (bone.severed) return;
+    if (bone.severed || !Dummy.gore.sever) return;
     bone.severed = true;
     const a = bone.a, b = bone.b, w = this.world;
     const stub = new Particle(a.pos.x, a.pos.y, a.pos.z, 0.045, 1);
@@ -817,12 +1074,14 @@ export class Dummy {
     for (const q of D) q.push(t2, w.dt);
     stub.push(t2, w.dt);
     this.bleeding += 1;
+    if (this.alive && bone.name !== 'head') Dummy.say(this, 'dismember');
     if (bone.name === 'head') this.die();
     else if (bone.leg && this.alive) { this.state = 'down'; this.downT = 1.2; }
   }
 
   explodeHead() {
     if (this.headGone) return;
+    if (!Dummy.gore.sever) { this.hp = 0; this.die(); return; }
     const hb = this.bone.head, head = this.p.head;
     if (!hb.severed) this.sever(hb);
     if (this.headL) { this.headL.mesh.visible = false; this.headL = null; }
@@ -880,6 +1139,12 @@ export class Dummy {
       this.headMesh.quaternion.setFromRotationMatrix(mb.makeBasis(t1, t2, t3));
       this.headMesh.position.copy(hb.b.pos);
     }
+    const hb2 = this.bone.head;
+    this.neckMesh.visible = !hb2.severed;
+    if (this.neckMesh.visible) {
+      this.neckMesh.position.addVectors(P.neck.pos, P.head.pos).multiplyScalar(0.5).addScaledVector(t2, -0.03 * this.s);
+      this.neckMesh.quaternion.setFromUnitVectors(UP, w1.subVectors(P.head.pos, P.neck.pos).normalize());
+    }
     if (this.headL) {
       const hl = this.headL;
       t1.subVectors(hl.neck.pos, hl.sh.pos); t2.subVectors(hl.head.pos, hl.neck.pos).normalize();
@@ -893,9 +1158,12 @@ export class Dummy {
       gt.mesh.position.addVectors(gt.a.pos, gt.b.pos).multiplyScalar(0.5);
       gt.mesh.quaternion.setFromUnitVectors(UP, t1.subVectors(gt.b.pos, gt.a.pos).normalize());
     }
-    const expr = !this.alive ? 'dead' : this.hurtT > 0 ? 'hurt'
+    const expr = this.skeleton ? 'skeleton' : this.burnT > 3 ? 'scorched' : !this.alive ? 'dead' : this.state === 'out' ? 'out'
+      : this.choked && this.chokeT > 0.3 ? 'choke' : this.hurtT > 0 ? 'hurt'
       : (this.bleeding > 0 || this.hp < this.maxHp * 0.6) ? 'bleed' : this.angry ? 'angry' : 'neutral';
-    if (expr !== this.expr) { this.expr = expr; this.headMesh.material.map = faceTex(this.skin, this.hair, expr); }
+    const look = expr + Math.floor(this.bruise);
+    if (look !== this.expr) { this.expr = look; this.headMesh.material.map = faceTex(this.skin, this.hair, expr, Math.floor(this.bruise)); }
+    if (this.bombLight) this.bombLight.material.color.setHex(this.bombT > 0 && Math.sin(this.time * 30) > 0 ? 0xff2200 : 0x330000);
     for (const w of this.wounds) {
       if (!w.stain) continue;
       const age = this.time - w.born;

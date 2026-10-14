@@ -1,8 +1,9 @@
 // Blood droplets, splat decals, bleeding stumps and gib chunks.
 import * as THREE from '../vendor/three.module.js';
-import { Particle, HALF, WALL_H } from './physics.js?v=13';
+import { Particle, HALF, WALL_H } from './physics.js?v=14';
 
-const N_DROPS = 600, N_DECALS = 900, N_GIBS = 48;
+const N_DROPS = 600, N_DECALS = 900, N_GIBS = 48, N_FIRE = 360;
+const fireCol = new THREE.Color();
 const BLOOD = new THREE.Color(0x8a0303), SPARK = new THREE.Color(0xffd27a);
 
 // decal orientation per surface: 0 z=-HALF, 1 z=+HALF, 2 x=-HALF, 3 x=+HALF, 4 floor/tabletop
@@ -51,6 +52,18 @@ export class Gore {
     this.gibBody = {};
 
     this.emitters = [];
+    // gore level, set from the menu: how much blood and how many chunks
+    this.blood = 1; this.gibMult = 1;
+
+    // fire: additive blobs that rise, swell and fade from yellow through red to smoke
+    this.fpos = new Float32Array(N_FIRE * 3); this.fvel = new Float32Array(N_FIRE * 3);
+    this.flife = new Float32Array(N_FIRE); this.fmax = new Float32Array(N_FIRE); this.fsize = new Float32Array(N_FIRE); this.fhot = new Uint8Array(N_FIRE);
+    this.fireNext = 0;
+    this.fireMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.75, depthWrite: false, blending: THREE.AdditiveBlending }), N_FIRE);
+    this.fireMesh.frustumCulled = false;
+    for (let i = 0; i < N_FIRE; i++) { this.fireMesh.setMatrixAt(i, ZERO); this.fireMesh.setColorAt(i, BLOOD); }
+    scene.add(this.fireMesh);
     this.wallH = WALL_H;
   }
 
@@ -65,6 +78,7 @@ export class Gore {
 
   // n droplets from point p, roughly along dir
   spray(p, dir, n, speed, spread = 0.45) {
+    n = Math.round(n * this.blood);
     for (let i = 0; i < n; i++) {
       const s = speed * (0.3 + Math.random() * 0.9);
       this.drop(p.x, p.y, p.z,
@@ -81,10 +95,25 @@ export class Gore {
   }
 
   // keep bleeding from a physics particle for a while
-  emitter(particle, seconds, rate = 40) { this.emitters.push({ p: particle, t: seconds, rate, acc: 0 }); }
+  emitter(particle, seconds, rate = 40) { if (this.blood > 0) this.emitters.push({ p: particle, t: seconds * Math.min(2, Math.max(0.6, this.blood)), rate: rate * Math.min(2, this.blood), acc: 0 }); }
+
+  flame(x, y, z, vx, vy, vz, life, size, hot) {
+    const i = this.fireNext; this.fireNext = (i + 1) % N_FIRE;
+    this.fpos[i * 3] = x; this.fpos[i * 3 + 1] = y; this.fpos[i * 3 + 2] = z;
+    this.fvel[i * 3] = vx; this.fvel[i * 3 + 1] = vy; this.fvel[i * 3 + 2] = vz;
+    this.flife[i] = this.fmax[i] = life; this.fsize[i] = size; this.fhot[i] = hot ? 1 : 0;
+  }
+  // every flame from the thrower that can still set something alight
+  forHotFlames(cb) {
+    for (let i = 0; i < N_FIRE; i++) if (this.fhot[i] && this.flife[i] > 0 && i % 2 === 0) cb(this.fpos[i * 3], this.fpos[i * 3 + 1], this.fpos[i * 3 + 2], this.fsize[i], i);
+  }
+  // a flame that has hit something stops and clings there
+  slowFlame(i) { this.fhot[i] = 0; this.fvel[i * 3] *= 0.15; this.fvel[i * 3 + 1] *= 0.15; this.fvel[i * 3 + 2] *= 0.15; }
+  clearFire() { this.flife.fill(0); }
 
   // palette: hex colours to pick from, so chunks read as meat, skin, bone or brain
   gibs(p, n, palette = MEAT, speed = 1) {
+    n = Math.round(n * this.gibMult);
     const h = this.world.dt;
     for (let i = 0; i < n; i++) {
       const k = this.gibNext; this.gibNext = (k + 1) % N_GIBS;
@@ -115,6 +144,15 @@ export class Gore {
   }
 
   update(h) {
+    for (let i = 0; i < N_FIRE; i++) {
+      if (this.flife[i] <= 0) continue;
+      this.flife[i] -= h;
+      const a = i * 3, drag = Math.max(0, 1 - h * 2.2);
+      this.fvel[a] *= drag; this.fvel[a + 2] *= drag; this.fvel[a + 1] = this.fvel[a + 1] * drag + h * 3;
+      this.fpos[a] += this.fvel[a] * h; this.fpos[a + 1] += this.fvel[a + 1] * h; this.fpos[a + 2] += this.fvel[a + 2] * h;
+      if (this.fpos[a + 1] < 0.05) { this.fpos[a + 1] = 0.05; this.fvel[a + 1] = Math.abs(this.fvel[a + 1]) * 0.2; }
+      this.fsize[i] += h * 0.45;
+    }
     const g = this.world.gravity * h, lim = HALF - 0.006;
     for (let k = this.emitters.length - 1; k >= 0; k--) {
       const e = this.emitters[k];
@@ -160,6 +198,14 @@ export class Gore {
   }
 
   sync(time) {
+    for (let i = 0; i < N_FIRE; i++) {
+      if (this.flife[i] <= 0) { this.fireMesh.setMatrixAt(i, ZERO); continue; }
+      const t = this.flife[i] / this.fmax[i], s = this.fsize[i];
+      m4.makeScale(s, s, s).setPosition(this.fpos[i * 3], this.fpos[i * 3 + 1], this.fpos[i * 3 + 2]);
+      this.fireMesh.setMatrixAt(i, m4);
+      this.fireMesh.setColorAt(i, t > 0.65 ? fireCol.setRGB(1, 0.85, 0.35) : t > 0.35 ? fireCol.setRGB(1, 0.42, 0.08) : t > 0.15 ? fireCol.setRGB(0.55, 0.1, 0.03) : fireCol.setRGB(0.12, 0.11, 0.1));
+    }
+    this.fireMesh.instanceMatrix.needsUpdate = true; this.fireMesh.instanceColor.needsUpdate = true;
     const P = this.pos;
     for (let i = 0; i < N_DROPS; i++) {
       if (this.life[i] <= 0) { this.drops.setMatrixAt(i, ZERO); continue; }
