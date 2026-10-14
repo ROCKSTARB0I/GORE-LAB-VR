@@ -30,6 +30,7 @@ export class World {
     this.colliders = [];  // particles that bump into every other particle
     this.boxes = [];      // static {min, max}
     this.bodies = [];     // solid ragdoll volumes: {owner, center, caps: [{a, b, r, self}]}
+    this.rods = [];       // things with length that must not pass through a body: {a, b, r, body} or {bone, r, body}
     this.gravity = -9.8;
     this.scale = 1;       // time scale (slow-mo)
   }
@@ -46,6 +47,7 @@ export class World {
     this.colliders = this.colliders.filter(p => p.body !== body);
     this.sticks = this.sticks.filter(s => s.body !== body);
     this.bodies = this.bodies.filter(b => b.owner !== body);
+    this.rods = this.rods.filter(r => r.body !== body);
   }
   // Verlet stores velocity as (pos - prev), so changing the step means rescaling it.
   setScale(s) {
@@ -76,7 +78,7 @@ export class World {
         a.pos.x += dx * k * wa; a.pos.y += dy * k * wa; a.pos.z += dz * k * wa;
         b.pos.x -= dx * k * wb; b.pos.y -= dy * k * wb; b.pos.z -= dz * k * wb;
       }
-      if (it === 2) this.collide();
+      if (it === 2) { this.collide(); this.collideBodies(); }
     }
     this.collideSpheres();
     this.collideBodies();
@@ -129,6 +131,13 @@ export class World {
   collideBodies() {
     for (const B of this.bodies) {
       const c = B.center.pos, own = B.owner;
+      // each shape's midpoint and half-length, for cheap rejection below
+      for (const cap of B.caps) {
+        if (cap.dead) continue;
+        const ca = cap.bone ? cap.bone.a : cap.a, cb = cap.bone ? cap.bone.b : cap.b;
+        cap.mx = (ca.pos.x + cb.pos.x) * 0.5; cap.my = (ca.pos.y + cb.pos.y) * 0.5; cap.mz = (ca.pos.z + cb.pos.z) * 0.5;
+        cap.hl = ca === cb ? 0 : ca.pos.distanceTo(cb.pos) * 0.5;
+      }
       for (const p of this.particles) {
         if (p.pinned || p.ghost) continue;
         const cx = p.pos.x - c.x, cy = p.pos.y - c.y, cz = p.pos.z - c.z;
@@ -137,6 +146,8 @@ export class World {
         if (mine && p.noSelf) continue;
         for (const cap of B.caps) {
           if (cap.dead || (mine && !cap.self)) continue;
+          const far = cap.hl + cap.r + p.r, qx = p.pos.x - cap.mx, qy = p.pos.y - cap.my, qz = p.pos.z - cap.mz;
+          if (qx * qx + qy * qy + qz * qz > far * far) continue;
           const a = cap.bone ? cap.bone.a : cap.a, b = cap.bone ? cap.bone.b : cap.b;
           if (p === a || p === b || a.gone) continue;
           const ex = b.pos.x - a.pos.x, ey = b.pos.y - a.pos.y, ez = b.pos.z - a.pos.z;
@@ -148,13 +159,53 @@ export class World {
           const rr = cap.r + p.r * 0.5, d2 = dx * dx + dy * dy + dz * dz;
           if (d2 >= rr * rr || d2 < 1e-10) continue;
           const d = Math.sqrt(d2);
-          const wa = a.pinned ? 0 : a.invMass * (1 - t), wb = b.pinned ? 0 : b.invMass * t, wc = (wa + wb) * 0.5, w = p.invMass + wc;
+          // Something already resting on the floor can't be pushed further
+          // down, so the body on top of it is lifted instead.
+          const wp = dy < 0 && p.pos.y <= p.r + 0.004 ? 0 : p.invMass;
+          const wa = a.pinned ? 0 : a.invMass * (1 - t), wb = b.pinned ? 0 : b.invMass * t, w = wp + wa + wb;
+          if (w === 0) continue;
           const k = (rr - d) / d / w;
-          p.pos.x += dx * k * p.invMass; p.pos.y += dy * k * p.invMass; p.pos.z += dz * k * p.invMass;
-          a.pos.x -= dx * k * wa * 0.5; a.pos.y -= dy * k * wa * 0.5; a.pos.z -= dz * k * wa * 0.5;
-          b.pos.x -= dx * k * wb * 0.5; b.pos.y -= dy * k * wb * 0.5; b.pos.z -= dz * k * wb * 0.5;
+          p.pos.x += dx * k * wp; p.pos.y += dy * k * wp; p.pos.z += dz * k * wp;
+          a.pos.x -= dx * k * wa; a.pos.y -= dy * k * wa; a.pos.z -= dz * k * wa;
+          b.pos.x -= dx * k * wb; b.pos.y -= dy * k * wb; b.pos.z -= dz * k * wb;
           // a little grip so things rest on a body instead of skating off it
           p.prev.x += (p.pos.x - p.prev.x) * 0.08; p.prev.y += (p.pos.y - p.prev.y) * 0.08; p.prev.z += (p.pos.z - p.prev.z) * 0.08;
+        }
+      }
+      // Whole lengths, not just their ends: a forearm, a loop of gut or a gun
+      // lying across a chest is stopped anywhere along it.
+      for (const R of this.rods) {
+        if (R.skip?.()) continue;
+        const a = R.bone ? R.bone.a : R.a, b = R.bone ? R.bone.b : R.b;
+        if (a.gone || b.gone) continue;
+        const cx = a.pos.x - c.x, cy = a.pos.y - c.y, cz = a.pos.z - c.z;
+        if (cx * cx + cy * cy + cz * cz > 3.2) continue;
+        const mine = R.body === own;
+        if (mine && (a.noSelf || b.noSelf)) continue;   // joined to the trunk at that end
+        const rmx = (a.pos.x + b.pos.x) * 0.5, rmy = (a.pos.y + b.pos.y) * 0.5, rmz = (a.pos.z + b.pos.z) * 0.5;
+        const rhl = Math.sqrt((b.pos.x - a.pos.x) ** 2 + (b.pos.y - a.pos.y) ** 2 + (b.pos.z - a.pos.z) ** 2) * 0.5;
+        for (const cap of B.caps) {
+          if (cap.dead || (mine && !cap.self)) continue;
+          const far = rhl + cap.hl + cap.r + R.r, qx = rmx - cap.mx, qy = rmy - cap.my, qz = rmz - cap.mz;
+          if (qx * qx + qy * qy + qz * qz > far * far) continue;
+          const ca = cap.bone ? cap.bone.a : cap.a, cb = cap.bone ? cap.bone.b : cap.b;
+          if (ca === a || ca === b || cb === a || cb === b || ca.gone) continue;
+          const rr = cap.r + R.r, d2 = segSeg(a.pos, b.pos, ca.pos, cb.pos);
+          if (d2 >= rr * rr || d2 < 1e-9) continue;
+          const s = segSeg.s, t = segSeg.t, d = Math.sqrt(d2);
+          const nx = (a.pos.x + (b.pos.x - a.pos.x) * s) - (ca.pos.x + (cb.pos.x - ca.pos.x) * t);
+          const ny = (a.pos.y + (b.pos.y - a.pos.y) * s) - (ca.pos.y + (cb.pos.y - ca.pos.y) * t);
+          const nz = (a.pos.z + (b.pos.z - a.pos.z) * s) - (ca.pos.z + (cb.pos.z - ca.pos.z) * t);
+          const floored = ny < 0 && (a.pos.y <= a.r + 0.004 || b.pos.y <= b.r + 0.004);
+          const wa = a.pinned || floored ? 0 : a.invMass * (1 - s), wb = b.pinned || floored ? 0 : b.invMass * s;
+          const wca = ca.pinned ? 0 : ca.invMass * (1 - t), wcb = cb.pinned || cb === ca ? 0 : cb.invMass * t;
+          const W = wa + wb + wca + wcb;
+          if (W === 0) continue;
+          const k = (rr - d) / d / W;
+          a.pos.x += nx * k * wa; a.pos.y += ny * k * wa; a.pos.z += nz * k * wa;
+          b.pos.x += nx * k * wb; b.pos.y += ny * k * wb; b.pos.z += nz * k * wb;
+          ca.pos.x -= nx * k * wca; ca.pos.y -= ny * k * wca; ca.pos.z -= nz * k * wca;
+          cb.pos.x -= nx * k * wcb; cb.pos.y -= ny * k * wcb; cb.pos.z -= nz * k * wcb;
         }
       }
     }

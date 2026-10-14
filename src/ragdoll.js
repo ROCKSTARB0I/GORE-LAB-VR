@@ -2,7 +2,7 @@
 // walking pose while alive ("active ragdoll"), goes limp when dead, and can
 // lose its head and limbs.
 import * as THREE from '../vendor/three.module.js';
-import { Particle, HALF, segSeg } from './physics.js?v=10';
+import { Particle, HALF, segSeg } from './physics.js?v=11';
 
 // rest pose, facing +Z
 const REST = {
@@ -323,12 +323,13 @@ export class Dummy {
     this.torsoMesh = new THREE.Mesh(torsoGeo, new THREE.MeshLambertMaterial({ color: shirt }));
     this.group.add(this.headMesh, this.torsoMesh);
     this.stumps = [];
-    // solid shapes other things collide with; arms and legs only block outsiders
+    // solid shapes: trunk, head and every limb, against outsiders and against the body's own loose parts
     const P = this.p;
     this.torsoCaps = [{ a: P.pelvis, b: P.neck, r: 0.115, self: true }, { a: P.lSh, b: P.lHip, r: 0.075, self: true }, { a: P.rSh, b: P.rHip, r: 0.075, self: true }];
     this.headCap = { a: P.head, b: P.head, r: 0.105, self: true };
-    this.solid = { owner: this, center: P.chest, caps: [...this.torsoCaps, this.headCap, ...this.bones.filter(b => b.name !== 'head').map(b => ({ bone: b, r: b.r, self: false }))] };
+    this.solid = { owner: this, center: P.chest, caps: [...this.torsoCaps, this.headCap, ...this.bones.filter(b => b.name !== 'head').map(b => ({ bone: b, r: b.r, self: true }))] };
     world.bodies.push(this.solid);
+    for (const b of this.bones) if (b.name !== 'head') world.rods.push({ bone: b, r: b.r, body: this });
     this.sync();
   }
 
@@ -575,6 +576,7 @@ export class Dummy {
           this.sticks.push(w.stick(prev, p, { len: 0.075, body: this }));
           const mesh = new THREE.Mesh(capsule(0.027, 0.075), gutMat);
           this.group.add(mesh); this.guts.push({ a: prev, b: p, mesh });
+          w.rods.push({ a: prev, b: p, r: 0.027, body: this });
         } else for (const k of ['pelvis', 'lHip', 'rHip', 'chest']) this.sticks.push(w.stick(P[k], p, { body: this }));
         prev = p;
       }
@@ -658,7 +660,7 @@ export class Dummy {
       p.noSelf = i < 2;
       if (prev) {
         this.sticks.push(this.world.stick(prev, p, { len: 0.075, body: this }));
-        if (prev !== anchor || i > 0) { const mesh = new THREE.Mesh(capsule(0.027, 0.075), gutMat); this.group.add(mesh); this.guts.push({ a: prev, b: p, mesh }); }
+        if (prev !== anchor || i > 0) { const mesh = new THREE.Mesh(capsule(0.027, 0.075), gutMat); this.group.add(mesh); this.guts.push({ a: prev, b: p, mesh }); this.world.rods.push({ a: prev, b: p, r: 0.027, body: this }); }
       }
       prev = p;
     }

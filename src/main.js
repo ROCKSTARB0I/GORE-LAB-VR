@@ -1,8 +1,8 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, WALL_H, TICK, segSeg } from './physics.js?v=10';
-import { Dummy } from './ragdoll.js?v=10';
-import { Gore } from './gore.js?v=10';
-import { sfx, music } from './audio.js?v=10';
+import { World, Particle, HALF, WALL_H, TICK, segSeg } from './physics.js?v=11';
+import { Dummy } from './ragdoll.js?v=11';
+import { Gore } from './gore.js?v=11';
+import { sfx, music } from './audio.js?v=11';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -490,6 +490,9 @@ function makeTool(kind, x, y, z) {
   t.a = new Particle(x + def.len / 2, y, z, 0.04, 1); t.b = new Particle(x - def.len / 2, y, z, 0.035, 1);
   t.a.body = t.b.body = t;
   world.add(t.a); world.add(t.b); world.stick(t.a, t.b, { len: def.len, body: t });
+  // Solid against bodies, except while stuck in one, holstered, or a blade in the hand
+  // (blades have to be able to cut). A gun in the hand shoves bodies but isn't shoved back.
+  world.rods.push({ a: t.a, b: t.b, r: 0.03, body: t, skip: () => !!(t.stuck || t.holster || (t.held && def.melee)) });
   if (def.muzzle) {
     t.muzzle = new THREE.Object3D(); t.muzzle.position.fromArray(def.muzzle); t.mesh.add(t.muzzle);
     t.flash = new THREE.Mesh(new THREE.SphereGeometry(kind === 'shotgun' || kind === 'rocket' ? 0.07 : 0.045, 8, 6), def.spawner ? M.cyan : M.flash);
