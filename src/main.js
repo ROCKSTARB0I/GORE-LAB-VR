@@ -1,8 +1,8 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=25';
-import { Dummy, faceTex } from './ragdoll.js?v=25';
-import { Gore } from './gore.js?v=25';
-import { sfx, music } from './audio.js?v=25';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=26';
+import { Dummy, faceTex } from './ragdoll.js?v=26';
+import { Gore } from './gore.js?v=26';
+import { sfx, music } from './audio.js?v=26';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -386,11 +386,12 @@ function renderMirror() {
   // your own head, for the mirror only
   // the head sits where a real one would: its centre a little below and behind your eyes
   camera.getWorldQuaternion(tq);
-  selfHead.position.set(0, -0.06, 0.085).applyQuaternion(tq).add(mv.c);
+  selfHead.position.set(0, -0.11, 0.085).applyQuaternion(tq).add(mv.c);
   selfHead.quaternion.copy(tq).multiply(flipY);
   // neck: from under the jaw down to the top of the body (or a short stub with no body)
-  const jaw = mv.look.set(0, -0.15, 0.075).applyQuaternion(tq).add(mv.c);
-  const base = fullBodyOn() ? avatar.neckBase : tv2.copy(jaw).add(tv3.set(0, -0.12, 0));
+  // it runs from inside the head to inside the top of the torso, so there's never a gap at either end
+  const jaw = mv.look.copy(selfHead.position);
+  const base = fullBodyOn() ? avatar.neckBase : tv2.copy(jaw).add(tv3.set(0, -0.26, 0));
   placeLimb(selfNeck, base, jaw);
   mesh.visible = false; selfHead.visible = true;
   const xr = renderer.xr.enabled, prev = renderer.getRenderTarget();
@@ -403,7 +404,7 @@ function renderMirror() {
 const flipY = new THREE.Quaternion().setFromAxisAngle(new V3(0, 1, 0), Math.PI);
 const selfHead = new THREE.Mesh(new THREE.SphereGeometry(0.115, 18, 14), new THREE.MeshLambertMaterial({ map: faceTex(0xdcb58f, 0x2a1b10, 'neutral') }));
 selfHead.layers.set(MIRROR_ONLY); scene.add(selfHead);
-const selfNeck = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.056, 1, 12), new THREE.MeshLambertMaterial({ color: 0xdcb58f }));
+const selfNeck = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.06, 1, 14), new THREE.MeshLambertMaterial({ color: 0xdcb58f }));
 selfNeck.layers.set(MIRROR_ONLY); scene.add(selfNeck);
 camera.layers.enable(EYES_ONLY);
 function setMap(key) {
@@ -1276,8 +1277,8 @@ function updateAvatar() {
   if (!on) return;
   const head = headPos(), yaw = bodyYaw();
   const fwd = av.f.set(-Math.sin(yaw), 0, -Math.cos(yaw)), right = av.r.set(Math.cos(yaw), 0, -Math.sin(yaw));
-  const neck = av.a.copy(head).addScaledVector(UP, -0.24).addScaledVector(fwd, -0.07);
-  (avatar.neckBase ??= new V3()).copy(neck).addScaledVector(UP, 0.02);
+  const neck = av.a.copy(head).addScaledVector(UP, -0.29).addScaledVector(fwd, -0.07);
+  (avatar.neckBase ??= new V3()).copy(neck).addScaledVector(UP, -0.06);   // a little way down inside the chest
   holQ.setFromAxisAngle(UP, yaw);
   avatar.torso.position.copy(neck).addScaledVector(UP, -0.27); avatar.torso.quaternion.copy(holQ);
   avatar.hips.position.copy(neck).addScaledVector(UP, -0.58); avatar.hips.quaternion.copy(holQ);
