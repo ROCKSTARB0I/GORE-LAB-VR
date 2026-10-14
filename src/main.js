@@ -1,8 +1,8 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, WALL_H, TICK, segSeg } from './physics.js?v=12';
-import { Dummy } from './ragdoll.js?v=12';
-import { Gore } from './gore.js?v=12';
-import { sfx, music } from './audio.js?v=12';
+import { World, Particle, HALF, WALL_H, TICK, segSeg } from './physics.js?v=13';
+import { Dummy } from './ragdoll.js?v=13';
+import { Gore } from './gore.js?v=13';
+import { sfx, music } from './audio.js?v=13';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -1188,8 +1188,13 @@ function melee(h, t, dt) {
 // Chainsaw: no swing needed. Hold the trigger to rev it and whatever the bar
 // touches gets chewed through a bit more every tenth of a second.
 let sawLevel = 0, sawCutting = false;
+const sweepV = new V3();
 function saw(h, t, dt) {
   h.hasTip = false;
+  // how fast the bar is moving, for sweep cuts
+  if (h.sawPrev) { tv.subVectors(t.b.pos, h.sawPrev).divideScalar(Math.max(dt, 1e-4)); h.sawVel.lerp(tv, 0.5); }
+  else { h.sawPrev = new V3(); h.sawVel = new V3(); }
+  h.sawPrev.copy(t.b.pos); sweepV.copy(h.sawVel);
   if (!h.trigger) { sawLevel = Math.max(sawLevel, 1); return; }
   sawLevel = 2;
   t.recoil = 0.02 + Math.random() * 0.03;   // rattle
@@ -1211,6 +1216,16 @@ function saw(h, t, dt) {
     if (!hit && touch) torso = true;
     if (!hit && !torso) continue;
     sawCutting = true;
+    // ripped through fast enough, it goes straight through, every frame it's in them
+    const onHead0 = hit?.name === 'head';
+    if (!d.split && (onHead0 || touch)) {
+      const sp = sweepV.length();
+      if (sp > 2.2) {
+        const top = onHead0 || d.heightOf(gutV.copy(bladeA).lerp(t.b.pos, trunkS)) > 0.36;
+        const down = sweepV.y < -0.6 * sp, level = Math.abs(sweepV.y) < 0.6 * sp;
+        if (top ? down && d.splitVertical() : (level || down) && d.splitWaist()) { sfx.splat(); pulseAll(1, 150); bloody(h, 0.4); continue; }
+      }
+    }
     if (d.sliceCd > 0) continue;
     d.sliceCd = 0.1;
     // where on the bar it's biting
@@ -1220,14 +1235,15 @@ function saw(h, t, dt) {
     d.addWound(hit, at, bladeDir, 'slash');
     const onHead = hit?.name === 'head';
     if (!d.split && (onHead || touch)) {
-      // sawing down from the head or shoulders splits them lengthways; through the middle cuts them in two
+      // Held in: into the head or shoulders it splits them lengthways, into the
+      // middle it cuts them in two.
       const top = onHead || d.heightOf(gutV.copy(bladeA).lerp(t.b.pos, trunkS)) > 0.36;
       d.sawTop = (d.sawTop ?? 0) + (top ? 1 : 0); d.sawMid = (d.sawMid ?? 0) + (top ? 0 : 1);
-      if (d.sawTop >= 5 ? d.splitVertical() : d.sawMid >= 5 ? d.splitWaist() : false) { sfx.splat(); pulseAll(1, 150); bloody(h, 0.4); continue; }
+      const done = top && d.sawTop >= 3 ? d.splitVertical() : !top && d.sawMid >= 3 ? d.splitWaist() : false;
+      if (done) { sfx.splat(); pulseAll(1, 150); bloody(h, 0.4); continue; }
     }
     if (onHead && !d.split) { d.hp -= 30; d.hurtT = 1; if (d.hp <= 0) d.die(); }
-    else d.hit(hit, 1.6, tv2.copy(bladeDir).multiplyScalar(1.2), at);
-    if (!hit) d.disembowel(at);
+    else d.hit(hit, 1.6, tv2.copy(bladeDir).multiplyScalar(0.6), at);
     if (d.alive && Math.random() < 0.3) sfx.grunt();
     bloody(h, 0.06);
   }
@@ -1474,7 +1490,8 @@ const HELP = [
     'Slash the belly and the guts spill out.',
     'Katana: a hard downward stroke splits them in half.',
     'A hard level stroke through the waist cuts them in two.',
-    'Chainsaw: hold the trigger. Keep it in them to saw through.',
+    'Chainsaw: hold the trigger and push it in, or rip it through:',
+    'into the waist cuts them in two, into the head splits them.',
   ]],
   ['GUNSHOTS', [
     'Each hit to the same spot goes deeper: skin, muscle, bone.',
