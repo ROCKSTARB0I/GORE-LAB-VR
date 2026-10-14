@@ -29,6 +29,7 @@ export class World {
     this.sticks = [];
     this.colliders = [];  // particles that bump into every other particle
     this.boxes = [];      // static {min, max}
+    this.bodies = [];     // solid ragdoll volumes: {owner, center, caps: [{a, b, r, self}]}
     this.gravity = -9.8;
     this.scale = 1;       // time scale (slow-mo)
   }
@@ -44,6 +45,7 @@ export class World {
     this.particles = this.particles.filter(p => p.body !== body);
     this.colliders = this.colliders.filter(p => p.body !== body);
     this.sticks = this.sticks.filter(s => s.body !== body);
+    this.bodies = this.bodies.filter(b => b.owner !== body);
   }
   // Verlet stores velocity as (pos - prev), so changing the step means rescaling it.
   setScale(s) {
@@ -77,6 +79,7 @@ export class World {
       if (it === 2) this.collide();
     }
     this.collideSpheres();
+    this.collideBodies();
     this.collide();
   }
 
@@ -115,6 +118,44 @@ export class World {
         else if (m === x2) { pos.x += x2; prev.x = pos.x; }
         else if (m === z1) { pos.z -= z1; prev.z = pos.z; }
         else { pos.z += z2; prev.z = pos.z; }
+      }
+    }
+  }
+
+  // Bodies are solid: loose limbs, guts, dropped guns, chunks and other people
+  // can't pass through a torso, head, arm or leg. Each body is a handful of
+  // capsules (two particles and a radius); anything inside one is pushed out
+  // and the capsule is pushed back.
+  collideBodies() {
+    for (const B of this.bodies) {
+      const c = B.center.pos, own = B.owner;
+      for (const p of this.particles) {
+        if (p.pinned || p.ghost) continue;
+        const cx = p.pos.x - c.x, cy = p.pos.y - c.y, cz = p.pos.z - c.z;
+        if (cx * cx + cy * cy + cz * cz > 2.4) continue;
+        const mine = p.body === own;
+        if (mine && p.noSelf) continue;
+        for (const cap of B.caps) {
+          if (cap.dead || (mine && !cap.self)) continue;
+          const a = cap.bone ? cap.bone.a : cap.a, b = cap.bone ? cap.bone.b : cap.b;
+          if (p === a || p === b || a.gone) continue;
+          const ex = b.pos.x - a.pos.x, ey = b.pos.y - a.pos.y, ez = b.pos.z - a.pos.z;
+          const px = p.pos.x - a.pos.x, py = p.pos.y - a.pos.y, pz = p.pos.z - a.pos.z;
+          const l2 = ex * ex + ey * ey + ez * ez;
+          let t = l2 > 1e-9 ? (px * ex + py * ey + pz * ez) / l2 : 0;
+          t = t < 0 ? 0 : t > 1 ? 1 : t;
+          const dx = px - ex * t, dy = py - ey * t, dz = pz - ez * t;
+          const rr = cap.r + p.r * 0.5, d2 = dx * dx + dy * dy + dz * dz;
+          if (d2 >= rr * rr || d2 < 1e-10) continue;
+          const d = Math.sqrt(d2);
+          const wa = a.pinned ? 0 : a.invMass * (1 - t), wb = b.pinned ? 0 : b.invMass * t, wc = (wa + wb) * 0.5, w = p.invMass + wc;
+          const k = (rr - d) / d / w;
+          p.pos.x += dx * k * p.invMass; p.pos.y += dy * k * p.invMass; p.pos.z += dz * k * p.invMass;
+          a.pos.x -= dx * k * wa * 0.5; a.pos.y -= dy * k * wa * 0.5; a.pos.z -= dz * k * wa * 0.5;
+          b.pos.x -= dx * k * wb * 0.5; b.pos.y -= dy * k * wb * 0.5; b.pos.z -= dz * k * wb * 0.5;
+          // a little grip so things rest on a body instead of skating off it
+          p.prev.x += (p.pos.x - p.prev.x) * 0.08; p.prev.y += (p.pos.y - p.prev.y) * 0.08; p.prev.z += (p.pos.z - p.prev.z) * 0.08;
+        }
       }
     }
   }

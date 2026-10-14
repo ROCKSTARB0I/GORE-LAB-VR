@@ -1,8 +1,8 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, WALL_H, TICK, segSeg } from './physics.js?v=8';
-import { Dummy } from './ragdoll.js?v=8';
-import { Gore } from './gore.js?v=8';
-import { sfx, music } from './audio.js?v=8';
+import { World, Particle, HALF, WALL_H, TICK, segSeg } from './physics.js?v=9';
+import { Dummy } from './ragdoll.js?v=9';
+import { Gore } from './gore.js?v=9';
+import { sfx, music } from './audio.js?v=9';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -323,6 +323,7 @@ function blast(c, R = 5) {
       for (let n = dist < R * 0.36 ? 4 : 2; n > 0 && limbs.length; n--) d.sever(limbs.splice(Math.floor(Math.random() * limbs.length), 1)[0]);
       if (dist < R * 0.44) d.explodeHead();
       gore.spray(d.p.chest.pos, UP, 30, 5, 1.2);
+      gore.gibs(d.p.chest.pos, 5, [0x8a0f0f, 0x7a1414, 0xa01818, d.skin, 0xe8dcc0]);
     }
     if (d.hp <= 0) d.die();
   }
@@ -404,13 +405,22 @@ const GUNS = {
   rifle: { twoHand: true, name: 'Assault rifle', len: 0.55, auto: true, cool: 0.1, pellets: 1, spread: 0.012, dmg: 1.3, push: 3.5, kick: 0.14, sound: 'rifle', muzzle: [0, 0.04, -0.6] },
   shotgun: { twoHand: true, name: 'Shotgun', len: 0.62, cool: 0.65, pellets: 9, spread: 0.06, dmg: 1, push: 3.2, kick: 0.5, gib: true, sound: 'shotgun', muzzle: [0, 0.04, -0.62] },
   rocket: { twoHand: true, name: 'Rocket launcher', len: 0.7, cool: 1.0, rocket: true, kick: 0.4, sound: 'rocket', muzzle: [0, 0.06, -0.66] },
-  knife: { name: 'Knife', len: 0.27, melee: true, blade: 0.4, dmg: 2, tiltVR: 0.25, tiltDesk: 0.1, thrust: true },
+  knife: { name: 'Knife', len: 0.27, melee: true, blade: 0.4, dmg: 2, tiltVR: 0.8, tiltDesk: 0.1, thrust: true },
   machete: { name: 'Machete', len: 0.66, melee: true, blade: 0.2, dmg: 4 },
-  katana: { name: 'Katana', len: 0.98, melee: true, blade: 0.22, dmg: 6 },
+  katana: { name: 'Katana', len: 0.98, melee: true, blade: 0.22, dmg: 6, halves: true },
   bat: { name: 'Baseball bat', len: 0.8, melee: true, blade: 0.3, dmg: 1, blunt: true },
   chainsaw: { name: 'Chainsaw', len: 0.78, melee: true, saw: true, blade: 0.32, tiltVR: 0.3, tiltDesk: 0.15, thrust: true },
 };
 const DEFAULT_TOOLS = Object.keys(GUNS);
+// Where the hand closes on each tool (in the tool's own space) and how far the
+// fist is rolled about X so the fingers wrap the handle the way a real hand would.
+const HANDLE = -Math.PI / 2;   // fist wrapped round a handle that runs along the tool
+const GRIPS = {
+  spawngun: [[0, -0.045, 0.005], -0.22], pistol: [[0, -0.035, 0.005], -0.22], revolver: [[0, -0.04, 0.02], -0.3],
+  smg: [[0, -0.04, 0.01], -0.22], rifle: [[0, -0.04, 0.01], -0.22], shotgun: [[0, -0.012, 0.05], -0.45], rocket: [[0, -0.03, 0], -0.15],
+  knife: [[0, 0, -0.03], HANDLE], machete: [[0, 0, -0.04], HANDLE], katana: [[0, 0, -0.07], HANDLE], bat: [[0, 0, -0.02], HANDLE],
+  chainsaw: [[0, -0.03, 0.06], -0.2],
+};
 const M = {
   dark: new THREE.MeshLambertMaterial({ color: 0x23262b }), grey: new THREE.MeshLambertMaterial({ color: 0x555b64 }),
   wood: new THREE.MeshLambertMaterial({ color: 0x7a4a26 }), steel: new THREE.MeshLambertMaterial({ color: 0xcfd6de }),
@@ -492,6 +502,7 @@ function makeTool(kind, x, y, z) {
 function removeTool(t) {
   if (t.held) { t.held.held = null; t.held = null; }
   if (t.support) { t.support.held = null; t.support = null; }
+  if (t.holster) { t.holster.tool = null; t.holster = null; }
   world.removeBody(t); scene.remove(t.mesh);
   tools.splice(tools.indexOf(t), 1);
 }
@@ -725,13 +736,15 @@ function makeHand(ctrl) {
 const vrHands = [0, 1].map(i => {
   const c = renderer.xr.getController(i); rig.add(c);
   const h = makeHand(c);
-  h.glove = buildHand(i ? 'right' : 'left', h.skin); c.add(h.glove);
+  h.side = i ? 'right' : 'left';
+  h.glove = buildHand(h.side, h.skin); h.glove.visible = false; scene.add(h.glove);
   h.ray = new THREE.Mesh(new THREE.BoxGeometry(0.003, 0.003, 1.2), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 }));
   h.ray.position.z = -0.65; c.add(h.ray);
   c.addEventListener('connected', e => {
     h.src = e.data;
     // controller index doesn't say which hand it is -- rebuild to match
-    c.remove(h.glove); h.glove = buildHand(e.data.handedness === 'left' ? 'left' : 'right', h.skin); c.add(h.glove);
+    h.side = e.data.handedness === 'left' ? 'left' : 'right';
+    scene.remove(h.glove); h.glove = buildHand(h.side, h.skin); scene.add(h.glove);
   });
   c.addEventListener('disconnected', () => { h.src = null; h.trigger = false; drop(h); });
   c.addEventListener('selectstart', () => { h.trigger = true; });
@@ -742,6 +755,7 @@ const vrHands = [0, 1].map(i => {
 });
 const desk = makeHand(null);
 desk.jab = 0;
+desk.side = 'right';
 desk.glove = buildHand('right', desk.skin); desk.glove.visible = false; scene.add(desk.glove);
 const hands = () => inVR ? vrHands : [desk];
 
@@ -760,8 +774,17 @@ function headPos() { return camera.getWorldPosition(headV); }
 // distance from point to tool / particle for grabbing
 function grab(h) {
   if (h.held) return;
+  // reach for a holster first
+  for (const hs of holsters) {
+    if (!hs.tool || (inVR && holsterPos(hs, tv).distanceTo(h.pos) > 0.27)) continue;
+    const t = hs.tool;
+    hs.tool = null; t.holster = null; t.held = h; h.held = { type: 'tool', tool: t }; h.hasTip = false;
+    pulse(h, 0.6, 50); sfx.tick();
+    return;
+  }
   let best = null, bd = 0.2;
   for (const t of tools) {
+    if (t.holster) continue;
     const d = Math.sqrt(segSeg(h.pos, h.pos, t.a.pos, t.b.pos));
     if (t.held) {
       // second hand on a long gun someone is already holding: steady it
@@ -783,7 +806,7 @@ function grab(h) {
     let off = 0.3;
     const o = h.aimFrom ?? h.pos;
     for (const t of tools) {
-      if (t.held) continue;
+      if (t.held || t.holster) continue;
       const d = Math.sqrt(segSeg(o, tv2, t.a.pos, t.b.pos));
       if (d < off) { off = d; best = { type: 'tool', tool: t }; }
     }
@@ -828,17 +851,91 @@ function drop(h) {
     t.support = null; t.held = sup; sup.held = { type: 'tool', tool: t };
     return;
   }
+  if (held.type === 'tool') {
+    // let go at a hip or over the shoulder and it goes in the holster there
+    for (const hs of holsters) {
+      if (hs.tool || holsterPos(hs, tv).distanceTo(h.pos) > 0.25) continue;
+      hs.tool = held.tool; held.tool.holster = hs; held.tool.held = null;
+      pulse(h, 0.6, 50); sfx.tick();
+      return;
+    }
+  }
   const ps = held.type === 'tool' ? [held.tool.a, held.tool.b] : [held.p];
   if (held.type === 'tool') held.tool.held = null;
   for (const p of ps) { p.pinned = false; p.prev.copy(p.pos).addScaledVector(h.vel, -TICK); }
   if (held.type === 'particle' && held.p.grab?.fuse === -1) held.p.grab.fuse = 2.5;
 }
+// Holsters ride on the body: one at each hip and one over the right shoulder.
+const holsters = [
+  { name: 'left hip', off: [-0.25, -0.72, 0.02], tool: null },
+  { name: 'right hip', off: [0.25, -0.72, 0.02], tool: null },
+  { name: 'back', off: [0.14, -0.22, 0.2], tool: null },
+];
+for (const hs of holsters) {
+  hs.mesh = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.13, 0.05), new THREE.MeshLambertMaterial({ color: 0x3a2a1c }));
+  hs.mesh.visible = false; scene.add(hs.mesh);
+}
+const holQ = new THREE.Quaternion(), holDown = new THREE.Quaternion().setFromAxisAngle(new V3(1, 0, 0), -Math.PI / 2);
+function bodyYaw() { camera.getWorldDirection(tv3); return Math.atan2(-tv3.x, -tv3.z); }
+function holsterPos(hs, out) {
+  const yaw = bodyYaw(), c = Math.cos(yaw), s = Math.sin(yaw), head = headPos();
+  return out.set(head.x + hs.off[0] * c + hs.off[2] * s, head.y + hs.off[1], head.z - hs.off[0] * s + hs.off[2] * c);
+}
+function updateHolsters() {
+  holQ.setFromAxisAngle(UP, bodyYaw());
+  for (const hs of holsters) {
+    holsterPos(hs, hs.mesh.position); hs.mesh.quaternion.copy(holQ);
+    hs.mesh.visible = started && !hs.tool;
+  }
+}
+// a holstered tool hangs barrel-down at its holster
+function updateHolstered(t) {
+  holsterPos(t.holster, t.mesh.position);
+  t.mesh.quaternion.copy(holQ).multiply(holDown);
+  if (t.holster.name === 'back') t.mesh.quaternion.multiply(gq.setFromAxisAngle(X_AXIS, Math.PI));   // long guns ride muzzle-up
+  t.a.pos.copy(t.mesh.position); t.b.pos.copy(NEG_Z).applyQuaternion(t.mesh.quaternion).multiplyScalar(t.def.len).add(t.a.pos);
+  t.a.prev.copy(t.a.pos); t.b.prev.copy(t.b.pos);
+  t.a.pinned = t.b.pinned = true;
+}
+// desktop: one key puts the held weapon away, or draws the last one holstered
+function holsterKey() {
+  if (desk.held?.type === 'tool') {
+    const hs = holsters.find(x => !x.tool);
+    if (!hs) return;
+    const t = desk.held.tool;
+    if (t.support) return;
+    desk.held = null; t.held = null; t.holster = hs; hs.tool = t; sfx.tick();
+  } else if (!desk.held) grab(desk);
+}
+
 // let go of anything belonging to a body that is about to be removed
 function releaseBody(body) {
   for (const h of [...vrHands, desk]) if (h.held?.type === 'particle' && h.held.p.body === body) { h.held.p.pinned = false; h.held = null; }
 }
 
 const TOOL_TILT = new THREE.Quaternion(), aimM = new THREE.Matrix4();
+// Put the visible hand where a real one would be: wrapped round the grip of
+// the tool it holds, cupping the barrel when steadying, otherwise on the controller.
+const X_AXIS = new V3(1, 0, 0), gq = new THREE.Quaternion(), gv = new V3(), gx = new V3(), gy = new V3(), gz = new V3();
+function placeGlove(h) {
+  const g = h.glove, held = h.held, s = h.side === 'left' ? 1 : -1;
+  if (held?.type === 'tool') {
+    const t = held.tool, [pos, rot] = GRIPS[t.kind];
+    g.quaternion.copy(t.mesh.quaternion).multiply(gq.setFromAxisAngle(X_AXIS, rot));
+    gv.set(-0.016 * s, 0.03, -0.04).applyQuaternion(g.quaternion);   // centre of the closed fist -> the grip
+    g.position.fromArray(pos).applyQuaternion(t.mesh.quaternion).add(t.mesh.position).add(gv);
+  } else if (held?.type === 'support') {
+    // palm up under the barrel, fingers wrapped over it
+    const t = held.tool;
+    gy.copy(NEG_Z).applyQuaternion(t.mesh.quaternion);                 // along the barrel
+    gx.set(0, 1, 0).applyQuaternion(t.mesh.quaternion).multiplyScalar(s);
+    gz.crossVectors(gx, gy);
+    g.quaternion.setFromRotationMatrix(aimM.makeBasis(gx, gy, gz));
+    const along = Math.max(0.14, Math.min(t.def.len - 0.04, gv.subVectors(h.pos, t.mesh.position).dot(gy)));
+    gv.set(-0.016 * s, 0.03, -0.04).applyQuaternion(g.quaternion);
+    g.position.copy(t.mesh.position).addScaledVector(gy, along).addScaledVector(gx, s * 0.035).add(gv);
+  } else { g.position.copy(h.pos); g.quaternion.copy(h.quat); }
+}
 let spawnDotOn = false;
 function updateHand(h, dt) {
   h.prevPos.copy(h.pos);
@@ -846,6 +943,7 @@ function updateHand(h, dt) {
     h.active = !!h.src && h.ctrl.visible;
     h.ctrl.getWorldPosition(h.pos); h.ctrl.getWorldQuaternion(h.quat);
     h.ray.visible = !h.held || paused;
+    h.glove.visible = h.active;
     const gp = h.src?.gamepad;
     h.trigV = gp?.buttons[0]?.value ?? (h.trigger ? 1 : 0); h.gripV = gp?.buttons[1]?.value ?? 0;
   } else {
@@ -864,7 +962,6 @@ function updateHand(h, dt) {
     }
     h.pos.copy(tv).applyQuaternion(camera.getWorldQuaternion(tq)).add(h.aimFrom);
     h.glove.visible = started && !inVR;
-    h.glove.position.copy(h.pos); h.glove.quaternion.copy(h.quat);
     h.trigV = h.trigger ? 1 : 0; h.gripV = h.jab > 0 ? 1 : 0;
   }
   // finger pose: wrap round whatever is held, otherwise follow trigger / grip
@@ -882,7 +979,7 @@ function updateHand(h, dt) {
     const t = held.tool;
     t.recoil = Math.max(0, t.recoil - dt * 4);
     tq.copy(h.quat);
-    if (t.def.melee) tq.multiply(TOOL_TILT.setFromAxisAngle(tv.set(1, 0, 0), inVR ? t.def.tiltVR ?? 1.0 : t.def.tiltDesk ?? 0.45));
+    if (t.def.melee) tq.multiply(TOOL_TILT.setFromAxisAngle(tv.set(1, 0, 0), inVR ? t.def.tiltVR ?? 1.05 : t.def.tiltDesk ?? 0.45));
     if (t.support && h.pos.distanceTo(t.support.pos) > 0.12) {
       // two-handed: the barrel runs from the trigger hand to the front hand
       aimM.lookAt(h.pos, t.support.pos, tv.set(0, 1, 0).applyQuaternion(h.quat));
@@ -911,6 +1008,7 @@ function updateHand(h, dt) {
   } else if (held?.type === 'particle') {
     held.p.pos.copy(h.pos); held.p.prev.copy(h.pos);
   }
+  placeGlove(h);
   h.wasTrigger = h.trigger;
 }
 
@@ -964,7 +1062,7 @@ function fire(h, t) {
   }
   sfx.shot(def.sound); pulse(h, def.kick > 0.4 ? 1 : 0.6, def.kick > 0.4 ? 120 : 50);
   if (def.rocket) { spawnRocket(fromV, dirV); return; }
-  const hitsPer = new Map();
+  const hitsPer = new Map(), clusters = new Map();
   for (let i = 0; i < def.pellets; i++) {
     const sp = def.spread * steady;
     dirV.copy(NEG_Z).applyQuaternion(t.aimQ);
@@ -978,8 +1076,14 @@ function fire(h, t) {
       gore.spray(hitPt, dirV, 9, 6, 0.35);
       gore.spray(hitPt, tv.copy(dirV).negate(), 4, 2, 0.6);
       if (d.alive && Math.random() < 0.5) sfx.grunt();
-      d.addWound(r.bone, hitPt, dirV, 'bullet');
-      d.hit(r.bone, def.dmg, tv.copy(dirV).multiplyScalar(def.push), hitPt, { explode: def.gib || Math.random() < 0.35 });
+      if (def.pellets > 1) {
+        // pellets that land on the same part are drawn as one torn-out chunk
+        const key = r.bone ?? d;
+        let c = clusters.get(key);
+        if (!c) clusters.set(key, c = { d, bone: r.bone, pt: new V3(), dir: dirV.clone(), n: 0 });
+        c.pt.add(hitPt); c.n++;
+      } else d.addWound(r.bone, hitPt, dirV, 'bullet', !!def.gib);
+      d.hit(r.bone, def.dmg, tv.copy(dirV).multiplyScalar(def.push), hitPt, { bullet: true, big: !!def.gib, dir: dirV });
       hitsPer.set(d, (hitsPer.get(d) || 0) + 1);
     } else if (r.kind === 'wall') gore.sparks(hitPt, 3);
     else if (r.kind === 'panel') press(r.index);
@@ -987,6 +1091,7 @@ function fire(h, t) {
     else if (r.kind === 'grenade') r.grenade.fuse = 0.02;
     else if (r.kind === 'ball') r.ball.p.push(tv.copy(dirV).multiplyScalar(6), world.dt);
   }
+  for (const c of clusters.values()) c.d.addWound(c.bone, c.pt.multiplyScalar(1 / c.n), c.dir, 'bullet', true, c.n);
   if (hitsPer.size) sfx.squish();
   for (const [d, n] of hitsPer) if (n >= 4 || def.dmg >= 3) d.knockdown(2.5 + Math.random());
 }
@@ -1006,7 +1111,6 @@ function melee(h, t, dt) {
   const thrust = tipVel.dot(bladeDir);
   if (speed > 1.4 && speed < 80) {
     for (const d of dummies) {
-      if (d.sliceCd > 0) continue;
       let hit = null, torso = false;
       for (const b of d.bones) {
         const head = b.name === 'head';
@@ -1015,11 +1119,21 @@ function melee(h, t, dt) {
         if (segSeg(bladeA, h.tip, pa, b.b.pos) < r * r || segSeg(h.prevTip, h.tip, pa, b.b.pos) < r * r) { hit = b; break; }
       }
       // the blade can catch an arm and still open the belly behind it
-      const touch = segSeg(bladeA, h.tip, d.p.pelvis.pos, d.p.neck.pos) < 0.2 * 0.2;
+      const touch = !d.split && segSeg(bladeA, h.tip, d.p.pelvis.pos, d.p.neck.pos) < 0.2 * 0.2;
       if (touch) gutV.copy(bladeA).lerp(h.tip, segSeg.s);
-      if (!hit && (touch || segSeg(h.prevTip, h.tip, d.p.pelvis.pos, d.p.neck.pos) < 0.2 * 0.2)) torso = true;
-      if (!hit && !torso) continue;
+      if (!hit && !d.split && (touch || segSeg(h.prevTip, h.tip, d.p.pelvis.pos, d.p.neck.pos) < 0.2 * 0.2)) torso = true;
+      if (!hit && !torso && !touch) continue;
       const stab = !def.blunt && thrust > 1.4 && thrust > speed * 0.7;
+      // A hard katana stroke goes clean through: straight down splits them left
+      // from right, level through the waist takes the top half off. Checked every
+      // frame the blade is in them, so catching an arm first doesn't stop it.
+      if (def.halves && !stab && !d.split && speed > 3.4) {
+        tv.copy(tipVel).normalize();
+        const done = tv.y < -0.7 && (hit?.name === 'head' || touch || torso) ? d.splitVertical()
+          : Math.abs(tv.y) < 0.5 && touch ? d.splitWaist(gutV) : false;
+        if (done) { d.sliceCd = 0.4; sfx.slice(); sfx.splat(); pulseAll(1, 150); bloody(h, 0.4); continue; }
+      }
+      if (d.sliceCd > 0 || (!hit && !torso)) continue;
       if (!stab && speed < 2.8) continue;
       d.sliceCd = 0.25;
       tv.copy(tipVel).normalize();
@@ -1072,17 +1186,29 @@ function saw(h, t, dt) {
       const r = (head ? 0.12 : b.r) + 0.04;
       if (segSeg(bladeA, t.b.pos, head ? b.b.pos : b.a.pos, b.b.pos) < r * r) { hit = b; break; }
     }
-    if (!hit && segSeg(bladeA, t.b.pos, d.p.pelvis.pos, d.p.neck.pos) < 0.2 * 0.2) torso = true;
+    const limbS = segSeg.s;
+    // the bar can be on an arm and in the trunk at the same time
+    const touch = !d.split && segSeg(bladeA, t.b.pos, d.p.pelvis.pos, d.p.neck.pos) < 0.2 * 0.2;
+    const trunkS = segSeg.s;
+    if (!hit && touch) torso = true;
     if (!hit && !torso) continue;
     sawCutting = true;
     if (d.sliceCd > 0) continue;
     d.sliceCd = 0.1;
     // where on the bar it's biting
-    const at = tv3.copy(bladeA).lerp(t.b.pos, segSeg.s);
+    const at = tv3.copy(bladeA).lerp(t.b.pos, hit ? limbS : trunkS);
     tv.set(Math.random() - 0.5, 0.6 + Math.random(), Math.random() - 0.5).normalize();
     gore.spray(at, tv, 14, 5, 0.9);
     d.addWound(hit, at, bladeDir, 'slash');
-    d.hit(hit, 1.6, tv2.copy(bladeDir).multiplyScalar(1.2), at);
+    const onHead = hit?.name === 'head';
+    if (!d.split && (onHead || touch)) {
+      // sawing down from the head or shoulders splits them lengthways; through the middle cuts them in two
+      const top = onHead || d.heightOf(gutV.copy(bladeA).lerp(t.b.pos, trunkS)) > 0.36;
+      d.sawTop = (d.sawTop ?? 0) + (top ? 1 : 0); d.sawMid = (d.sawMid ?? 0) + (top ? 0 : 1);
+      if (d.sawTop >= 5 ? d.splitVertical() : d.sawMid >= 5 ? d.splitWaist() : false) { sfx.splat(); pulseAll(1, 150); bloody(h, 0.4); continue; }
+    }
+    if (onHead && !d.split) { d.hp -= 30; d.hurtT = 1; if (d.hp <= 0) d.die(); }
+    else d.hit(hit, 1.6, tv2.copy(bladeDir).multiplyScalar(1.2), at);
     if (!hit) d.disembowel(at);
     if (d.alive && Math.random() < 0.3) sfx.grunt();
     bloody(h, 0.06);
@@ -1099,7 +1225,7 @@ function stickTool(t, d, mesh, h) {
 }
 function updateStuck(t) {
   const st = t.stuck;
-  if (st.d.gone || (st.mesh === st.d.headMesh && st.d.headGone)) {
+  if (st.d.gone || !st.mesh.visible || (st.mesh === st.d.headMesh && st.d.headGone)) {
     t.stuck = null; t.a.pinned = t.b.pinned = false;
     return;
   }
@@ -1139,7 +1265,7 @@ function pushHands() {
 }
 
 // ------------------------------------------------------------ player health + survival mode
-const P = { hp: 100, dead: false, deadT: 0, flash: 0, lastHit: -99 };
+const P = { hp: 100, dead: false, deadT: 0, flash: 0, lastHit: -99, y: 0, vy: 0, onGround: true };
 const SV = { on: false, wave: 0, queue: 0, inter: 0, spawnT: 0, best: 0 };
 try { SV.best = +(localStorage.getItem('goreLabBest') || 0); } catch { /* private mode */ }
 
@@ -1216,6 +1342,7 @@ function playerDie() {
 }
 function respawn() {
   P.hp = 100; P.dead = false; P.flash = 0;
+  P.y = 0; P.vy = 0;
   rig.position.set(0, S.height, 1.5);
   for (const d of dummies) d.knockdown(3);
 }
@@ -1289,7 +1416,7 @@ function updateSurvival(sdt) {
 
 // ------------------------------------------------------------ main menu (floating panel, pauses the game)
 let paused = false, played = false;
-const UI = { w: 1.7, h: 1.5, hover: -1, side: 0, follow: 0, head: 180, rowH: 120 };
+const UI = { w: 1.7, h: 1.5, hover: -1, side: 0, follow: 0, head: 180, rowH: 102, help: -1 };
 UI.canvas = document.createElement('canvas'); UI.canvas.width = 1024; UI.canvas.height = 900;
 UI.tex = new THREE.CanvasTexture(UI.canvas); UI.tex.colorSpace = THREE.SRGBColorSpace;
 UI.mesh = new THREE.Mesh(new THREE.PlaneGeometry(UI.w, UI.h), new THREE.MeshBasicMaterial({ map: UI.tex }));
@@ -1303,7 +1430,61 @@ const UI_ROWS = [
   { sel: true, label: () => 'MUSIC:  ' + trackName(), act: d => setTrack((S.track + 1 + d + music.tracks.length + 1) % (music.tracks.length + 1) - 1) },
   { sel: true, label: () => 'MUSIC VOLUME:  ' + Math.round(music.volume * 100) + '%', act: d => setVolume(music.volume + d * 0.1) },
   { sel: true, label: () => 'HEIGHT:  ' + fmtHeight(), act: d => setHeight(S.height + d * 0.05) },
+  { label: () => 'INSTRUCTIONS', act: () => { UI.help = 0; } },
 ];
+// what the INSTRUCTIONS button shows, a page at a time
+const HELP = [
+  ['MOVING', [
+    'Left stick: walk.   Right stick: turn.',
+    'A: jump. You can get up on crates and the table.',
+    'Click either stick in: open or close this menu.',
+    'Too tall or too short? Change HEIGHT in this menu.',
+    'Desktop: WASD, mouse, Space to jump, M for menu.',
+  ]],
+  ['HANDS AND GUNS', [
+    'Grip: grab and let go. Point and grip to pull things to you.',
+    'Trigger: shoot.   Grip alone points your finger.',
+    'Long guns: grip the barrel with your other hand to steady them.',
+    'Holsters: let go of a weapon at either hip or over your',
+    'right shoulder to stow it. Grip there to draw it again.',
+    'Desktop: E grab, click shoot, B holster or draw.',
+  ]],
+  ['BLADES', [
+    'Swing to slash. Thrust to stab: the blade stays stuck in.',
+    'Grip a stuck blade to pull it out.',
+    'Slash the belly and the guts spill out.',
+    'Katana: a hard downward stroke splits them in half.',
+    'A hard level stroke through the waist cuts them in two.',
+    'Chainsaw: hold the trigger. Keep it in them to saw through.',
+  ]],
+  ['GUNSHOTS', [
+    'Each hit to the same spot goes deeper: skin, muscle, bone.',
+    'Pistol, SMG and rifle take pieces off a head.',
+    'Revolver and shotgun take the whole head.',
+    'Wounded dummies hold the wound and slowly bleed out.',
+    'Barrels, grenades, mines and rockets set each other off.',
+  ]],
+  ['SPAWN GUN', [
+    'Hold it, then use that hand\'s stick:',
+    'up / down picks an item, left / right changes tab.',
+    'Trigger spawns it where the blue dot is.',
+    'Tabs: Weapons, NPCs, Props, World, Music, Maps.',
+    'Desktop: mouse wheel or Z / X to pick, Q for the next tab.',
+  ]],
+  ['SURVIVAL AND HEALTH', [
+    'Your health and the wave count float over your wrists.',
+    'Hostile dummies and zombies hit you at arm\'s reach.',
+    'Explosions hurt you too, including your own.',
+    'Survival: zombies come in waves. Each wave heals you a bit.',
+    'B: slow-mo.   X: hostile on / off.   Y: clear everything.',
+  ]],
+];
+const HELP_ROWS = [
+  { label: () => '◀  BACK TO MENU', act: () => { UI.help = -1; } },
+  null, null, null, null, null,
+  { sel: true, label: () => 'PAGE ' + (UI.help + 1) + ' / ' + HELP.length, act: d => { UI.help = (UI.help + d + HELP.length) % HELP.length; } },
+];
+const uiRows = () => UI.help >= 0 ? HELP_ROWS : UI_ROWS;
 function drawMainMenu() {
   if (!UI.mesh.visible) return;
   const g = UI.canvas.getContext('2d'), W = 1024, H = 900;
@@ -1312,10 +1493,18 @@ function drawMainMenu() {
   g.font = 'bold 110px Helvetica, Arial, sans-serif'; g.fillText('GORE LAB', W / 2, 80);
   g.fillStyle = '#8b94a1'; g.font = '30px Helvetica, Arial, sans-serif';
   g.fillText(inVR ? 'point and pull the trigger · click a stick to open this menu' : 'click to choose · M opens this menu', W / 2, 152);
-  UI_ROWS.forEach((r, i) => {
+  if (UI.help >= 0) {
+    const [title, lines] = HELP[UI.help], top = UI.head + UI.rowH;
+    g.fillStyle = '#1c2026'; g.fillRect(40, top + 6, W - 80, UI.rowH * 5 - 12);
+    g.fillStyle = '#e8792b'; g.font = 'bold 52px Helvetica, Arial, sans-serif'; g.fillText(title, W / 2, top + 50);
+    g.fillStyle = '#f2f4f7'; g.font = '33px Helvetica, Arial, sans-serif';
+    lines.forEach((ln, i) => g.fillText(ln, W / 2, top + 122 + i * 62));
+  }
+  uiRows().forEach((r, i) => {
+    if (!r) return;
     const y = UI.head + i * UI.rowH, hot = i === UI.hover;
-    g.fillStyle = hot ? '#e8792b' : i < 2 ? '#3a2a1c' : '#2a3038'; g.fillRect(40, y + 8, W - 80, UI.rowH - 16);
-    g.fillStyle = hot ? '#14171c' : '#f2f4f7'; g.font = 'bold 50px Helvetica, Arial, sans-serif';
+    g.fillStyle = hot ? '#e8792b' : i < 2 && UI.help < 0 ? '#3a2a1c' : '#2a3038'; g.fillRect(40, y + 8, W - 80, UI.rowH - 16);
+    g.fillStyle = hot ? '#14171c' : '#f2f4f7'; g.font = 'bold 46px Helvetica, Arial, sans-serif';
     g.fillText(r.label(), W / 2, y + UI.rowH / 2);
     if (r.sel) {
       g.font = 'bold 64px Helvetica, Arial, sans-serif';
@@ -1336,7 +1525,7 @@ function placeMenu() {
   UI.mesh.lookAt(head.x, UI.mesh.position.y, head.z);
 }
 function openMenu() {
-  paused = true; UI.mesh.visible = true; UI.hover = -1;
+  paused = true; UI.mesh.visible = true; UI.hover = -1; UI.help = -1;
   for (const h of [...vrHands, desk]) h.trigger = false;
   rig.updateMatrixWorld(true); placeMenu(); drawMainMenu();
 }
@@ -1356,11 +1545,11 @@ function menuPoint(o, d) {
   if (t < 0 || u < 0 || u > 1 || v < 0 || v > 1) return null;
   const row = Math.floor((v * 900 - UI.head) / UI.rowH);
   uiPt.copy(o).addScaledVector(d, t - 0.01);
-  return { row: row >= 0 && row < UI_ROWS.length ? row : -1, side: u < 0.5 ? -1 : 1, point: uiPt };
+  return { row: row >= 0 && row < uiRows().length && uiRows()[row] ? row : -1, side: u < 0.5 ? -1 : 1, point: uiPt };
 }
 function menuActivate(hit) {
   if (!hit || hit.row < 0) return;
-  const r = UI_ROWS[hit.row];
+  const r = uiRows()[hit.row];
   sfx.beep(); r.act(r.sel ? hit.side : 0);
   drawMainMenu();
 }
@@ -1394,6 +1583,25 @@ function updateMainMenu() {
 const keys = {};
 let yaw = 0, pitch = 0, locked = false, noLock = false, dragging = false, freecam = false, teleported = false;
 
+function jump() {
+  if (paused || P.dead || !P.onGround) return;
+  P.vy = 5; P.onGround = false;
+}
+// gravity for the player, plus crates and tables you can stand on or bump into
+function playerPhysics(dt) {
+  const head = headPos(), pad = 0.22;
+  let ground = 0;
+  for (const b of world.boxes) {
+    const x1 = head.x - (b.min.x - pad), x2 = (b.max.x + pad) - head.x, z1 = head.z - (b.min.z - pad), z2 = (b.max.z + pad) - head.z;
+    if (x1 <= 0 || x2 <= 0 || z1 <= 0 || z2 <= 0) continue;
+    if (P.y >= b.max.y - 0.3) { ground = Math.max(ground, b.max.y); continue; }   // on top of it, or a step low enough to walk up
+    const m = Math.min(x1, x2, z1, z2);
+    if (m === x1) rig.position.x -= x1; else if (m === x2) rig.position.x += x2; else if (m === z1) rig.position.z -= z1; else rig.position.z += z2;
+  }
+  P.vy += world.gravity * dt; P.y += P.vy * dt;
+  if (P.y <= ground) { P.y = ground; P.vy = 0; P.onGround = true; } else P.onGround = false;
+  rig.position.y = S.height + P.y;
+}
 function clampRig() {
   const p = headPos(), lim = HALF - 0.35;
   if (p.x > lim) rig.position.x -= p.x - lim; else if (p.x < -lim) rig.position.x -= p.x + lim;
@@ -1415,7 +1623,7 @@ function desktopMove(dt) {
     const sp = (keys.ShiftLeft ? 5.5 : 3.2) * dt;
     rig.position.x += (-Math.sin(yaw) * f + Math.cos(yaw) * s) * sp;
     rig.position.z += (-Math.cos(yaw) * f - Math.sin(yaw) * s) * sp;
-    rig.position.y = S.height;
+    playerPhysics(dt);
     clampRig();
   }
 }
@@ -1450,14 +1658,14 @@ function vrMove(dt) {
     if (click && !h.stickWas) paused ? closeMenu() : openMenu();
     h.stickWas = click;
     if (paused) continue;
-    // face buttons: right A = spawn, B = slow-mo; left X = hostile, Y = clear
+    // face buttons: right A = jump, B = slow-mo; left X = hostile, Y = clear
     for (let i = 0; i < 2; i++) {
       const down = !!gp.buttons[4 + i]?.pressed;
-      if (down && !h.btn[i]) { panelCd = 0; press(left ? (i ? 3 : 4) : (i ? 5 : 0)); }
+      if (down && !h.btn[i]) { if (!left && !i) jump(); else { panelCd = 0; press(left ? (i ? 3 : 4) : 5); } }
       h.btn[i] = down;
     }
   }
-  rig.position.y = S.height;
+  playerPhysics(dt);
   clampRig();
 }
 
@@ -1471,6 +1679,8 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyM') { paused ? closeMenu() : openMenu(); return; }
   if (paused) return;
   if (e.code === 'KeyE') desk.held ? drop(desk) : grab(desk);
+  if (e.code === 'KeyB') holsterKey();
+  if (e.code === 'Space' && !freecam) jump();
   if (e.code === 'KeyQ' || e.code === 'Tab') { e.preventDefault(); menuMove(e.shiftKey ? -1 : 1, 0); }
   if (e.code === 'KeyZ') menuMove(0, -1);
   if (e.code === 'KeyX') menuMove(0, 1);
@@ -1530,11 +1740,13 @@ $('enterVR').addEventListener('click', async () => {
     begin();
     session.addEventListener('end', () => {
       inVR = false; drop(vrHands[0]); drop(vrHands[1]);
+      for (const h of vrHands) h.glove.visible = false;
       camera.position.set(0, 1.65, 0); rig.rotation.y = 0; rig.position.y = 0; yaw = pitch = 0;
       $('hud').hidden = false; resize();
     });
     await renderer.xr.setSession(session);
     drop(desk); inVR = true; freecam = false; desk.glove.visible = false;
+    for (const h of vrHands) h.glove.visible = false;
     $('hud').hidden = true;
     rig.position.set(0, S.height, 1.5); rig.rotation.y = 0;
     UI.follow = 30;   // keep the menu in front until the headset pose arrives
@@ -1568,6 +1780,7 @@ renderer.setAnimationLoop(time => {
     if (inVR) vrMove(dt); else desktopMove(dt);
     rig.updateMatrixWorld(true);
     panelCd -= dt;
+    updateHolsters();
     spawnDotOn = false; sawLevel = 0; sawCutting = false;
     for (const h of hands()) updateHand(h, dt);
     sfx.saw(sawLevel, sawCutting);
@@ -1597,6 +1810,7 @@ renderer.setAnimationLoop(time => {
     for (const t of tools) {
       if (t.flashT > 0 && (t.flashT -= dt) <= 0) t.flash.visible = false;
       if (t.stuck) { updateStuck(t); continue; }
+      if (t.holster) { updateHolstered(t); continue; }
       if (t.held) continue;
       t.mesh.position.copy(t.a.pos);
       t.mesh.quaternion.setFromUnitVectors(NEG_Z, tv.subVectors(t.b.pos, t.a.pos).normalize());
@@ -1623,5 +1837,5 @@ renderer.setAnimationLoop(time => {
 });
 
 // for poking at things from the console
-window.lab = { UI, UI_ROWS, MAPS, setMap, setTrack, setHeight, openMenu, closeMenu, menuActivate, music, get paused() { return paused; }, P, SV, damagePlayer, startSurvival, world, dummies, tools, barrels, balls, grenades, mines, rockets, menu, menuMove, S, gore, desk, rig, camera, press, grab, drop, spawnDummy, spawnBarrel,
+window.lab = { holsters, jump, HELP, UI, UI_ROWS, MAPS, setMap, setTrack, setHeight, openMenu, closeMenu, menuActivate, music, get paused() { return paused; }, P, SV, damagePlayer, startSurvival, world, dummies, tools, barrels, balls, grenades, mines, rockets, menu, menuMove, S, gore, desk, rig, camera, press, grab, drop, spawnDummy, spawnBarrel,
   look(y, p) { yaw = y; pitch = p; }, get state() { return { started, inVR, freecam, locked, noLock }; } };

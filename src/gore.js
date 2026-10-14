@@ -1,6 +1,6 @@
 // Blood droplets, splat decals, bleeding stumps and gib chunks.
 import * as THREE from '../vendor/three.module.js';
-import { Particle, HALF, WALL_H } from './physics.js?v=8';
+import { Particle, HALF, WALL_H } from './physics.js?v=9';
 
 const N_DROPS = 600, N_DECALS = 900, N_GIBS = 48;
 const BLOOD = new THREE.Color(0x8a0303), SPARK = new THREE.Color(0xffd27a);
@@ -16,6 +16,7 @@ const SURF_Q = [
 
 const m4 = new THREE.Matrix4(), v = new THREE.Vector3(), sc = new THREE.Vector3(), q = new THREE.Quaternion();
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
+const MEAT = [0x8a0f0f, 0x6e0a0a, 0xa01818, 0x7a1414], gibCol = new THREE.Color();
 
 export class Gore {
   constructor(scene, world) {
@@ -41,9 +42,9 @@ export class Gore {
     this.decalNext = 0;
     scene.add(this.decals);
 
-    this.gibMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0x9c1f1f }), N_GIBS);
+    this.gibMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0xffffff }), N_GIBS);
     this.gibMesh.frustumCulled = false;
-    for (let i = 0; i < N_GIBS; i++) this.gibMesh.setMatrixAt(i, ZERO);
+    for (let i = 0; i < N_GIBS; i++) { this.gibMesh.setMatrixAt(i, ZERO); this.gibMesh.setColorAt(i, BLOOD); }
     scene.add(this.gibMesh);
     this.gibParts = new Array(N_GIBS).fill(null);
     this.gibNext = 0;
@@ -82,7 +83,8 @@ export class Gore {
   // keep bleeding from a physics particle for a while
   emitter(particle, seconds, rate = 40) { this.emitters.push({ p: particle, t: seconds, rate, acc: 0 }); }
 
-  gibs(p, n) {
+  // palette: hex colours to pick from, so chunks read as meat, skin, bone or brain
+  gibs(p, n, palette = MEAT, speed = 1) {
     const h = this.world.dt;
     for (let i = 0; i < n; i++) {
       const k = this.gibNext; this.gibNext = (k + 1) % N_GIBS;
@@ -90,8 +92,12 @@ export class Gore {
       if (old) this.world.particles.splice(this.world.particles.indexOf(old), 1);
       const g = new Particle(p.x + (Math.random() - 0.5) * 0.1, p.y + (Math.random() - 0.5) * 0.1, p.z + (Math.random() - 0.5) * 0.1, 0.03 + Math.random() * 0.03);
       g.body = this.gibBody; g.bounce = 0.2;
-      g.setVelocity(v.set((Math.random() - 0.5) * 7, 1 + Math.random() * 5, (Math.random() - 0.5) * 7), h);
+      g.setVelocity(v.set((Math.random() - 0.5) * 7 * speed, (1 + Math.random() * 5) * speed, (Math.random() - 0.5) * 7 * speed), h);
       g.spin = Math.random() * 6;
+      // ragged, uneven lumps rather than neat cubes
+      g.shape = [0.6 + Math.random() * 1.6, 0.5 + Math.random() * 0.9, 0.6 + Math.random() * 1.4];
+      this.gibMesh.setColorAt(k, gibCol.setHex(palette[Math.floor(Math.random() * palette.length)]));
+      this.gibMesh.instanceColor.needsUpdate = true;
       this.world.add(g);
       this.gibParts[k] = g;
       this.emitter(g, 1.2, 25);
@@ -166,7 +172,7 @@ export class Gore {
       const g = this.gibParts[i];
       if (!g) continue;
       q.setFromAxisAngle(v.set(0.5, 0.7, 0.3).normalize(), g.spin + g.pos.x * 4 + g.pos.z * 4);
-      sc.setScalar(g.r * 1.8);
+      sc.set(g.r * g.shape[0], g.r * g.shape[1], g.r * g.shape[2]);
       m4.compose(g.pos, q, sc);
       this.gibMesh.setMatrixAt(i, m4);
     }
