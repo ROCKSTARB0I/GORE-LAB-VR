@@ -1,0 +1,166 @@
+// Tiny Verlet physics world: particles, distance constraints, a box room,
+// a few static AABBs and sphere colliders. Everything in the lab (ragdolls,
+// guns, balls, barrels, gibs) is made of these particles.
+import * as THREE from '../vendor/three.module.js';
+
+export const HALF = 8;        // room is 16 x 16 m
+export const WALL_H = 5;
+export const TICK = 1 / 90;   // real seconds per physics tick
+
+export class Particle {
+  constructor(x, y, z, r = 0.05, invMass = 1) {
+    this.pos = new THREE.Vector3(x, y, z);
+    this.prev = this.pos.clone();
+    this.r = r;
+    this.invMass = invMass;
+    this.pinned = false;
+    this.bounce = 0;
+    this.body = null;      // particles sharing a body don't collide with each other
+    this.detached = false; // ragdoll: no longer driven by the pose
+  }
+  // add velocity dv (m/s) given the step length h
+  push(dv, h) { this.prev.addScaledVector(dv, -h); }
+  setVelocity(v, h) { this.prev.copy(this.pos).addScaledVector(v, -h); }
+}
+
+export class World {
+  constructor() {
+    this.particles = [];
+    this.sticks = [];
+    this.colliders = [];  // particles that bump into every other particle
+    this.boxes = [];      // static {min, max}
+    this.gravity = -9.8;
+    this.scale = 1;       // time scale (slow-mo)
+  }
+  get dt() { return TICK * this.scale; }
+
+  add(p) { this.particles.push(p); return p; }
+  stick(a, b, opts = {}) {
+    const s = { a, b, len: opts.len ?? a.pos.distanceTo(b.pos), min: !!opts.min, body: opts.body ?? null, dead: false };
+    this.sticks.push(s);
+    return s;
+  }
+  removeBody(body) {
+    this.particles = this.particles.filter(p => p.body !== body);
+    this.colliders = this.colliders.filter(p => p.body !== body);
+    this.sticks = this.sticks.filter(s => s.body !== body);
+  }
+  // Verlet stores velocity as (pos - prev), so changing the step means rescaling it.
+  setScale(s) {
+    const r = s / this.scale;
+    for (const p of this.particles) {
+      p.prev.set(p.pos.x - (p.pos.x - p.prev.x) * r, p.pos.y - (p.pos.y - p.prev.y) * r, p.pos.z - (p.pos.z - p.prev.z) * r);
+    }
+    this.scale = s;
+  }
+
+  step() {
+    const h = this.dt, g = this.gravity * h * h;
+    for (const p of this.particles) {
+      if (p.pinned) continue;
+      const vx = (p.pos.x - p.prev.x) * 0.997, vy = (p.pos.y - p.prev.y) * 0.997, vz = (p.pos.z - p.prev.z) * 0.997;
+      p.prev.copy(p.pos);
+      p.pos.x += vx; p.pos.y += vy + g; p.pos.z += vz;
+    }
+    for (let it = 0; it < 6; it++) {
+      for (const s of this.sticks) {
+        const a = s.a, b = s.b;
+        const dx = b.pos.x - a.pos.x, dy = b.pos.y - a.pos.y, dz = b.pos.z - a.pos.z;
+        const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-6;
+        if (s.min && d >= s.len) continue;
+        const wa = a.pinned ? 0 : a.invMass, wb = b.pinned ? 0 : b.invMass, w = wa + wb;
+        if (w === 0) continue;
+        const k = (d - s.len) / d / w;
+        a.pos.x += dx * k * wa; a.pos.y += dy * k * wa; a.pos.z += dz * k * wa;
+        b.pos.x -= dx * k * wb; b.pos.y -= dy * k * wb; b.pos.z -= dz * k * wb;
+      }
+      if (it === 2) this.collide();
+    }
+    this.collideSpheres();
+    this.collide();
+  }
+
+  collide() {
+    const FR = 0.05;
+    for (const p of this.particles) {
+      if (p.pinned) continue;
+      const r = p.r, pos = p.pos, prev = p.prev;
+      const fr = p.bounce ? 0.01 : FR;
+      if (pos.y < r) {
+        const vy = pos.y - prev.y;
+        pos.y = r;
+        prev.y = vy < -0.004 ? r + vy * p.bounce : r;
+        prev.x += (pos.x - prev.x) * fr; prev.z += (pos.z - prev.z) * fr;
+      }
+      const lim = HALF - r;
+      if (pos.x > lim) { const v = pos.x - prev.x; pos.x = lim; prev.x = lim + v * p.bounce; }
+      else if (pos.x < -lim) { const v = pos.x - prev.x; pos.x = -lim; prev.x = -lim + v * p.bounce; }
+      if (pos.z > lim) { const v = pos.z - prev.z; pos.z = lim; prev.z = lim + v * p.bounce; }
+      else if (pos.z < -lim) { const v = pos.z - prev.z; pos.z = -lim; prev.z = -lim + v * p.bounce; }
+      if (pos.y > WALL_H - r) { pos.y = WALL_H - r; prev.y = pos.y; }
+
+      for (const b of this.boxes) {
+        const x1 = pos.x - (b.min.x - r), x2 = (b.max.x + r) - pos.x;
+        const y1 = pos.y - (b.min.y - r), y2 = (b.max.y + r) - pos.y;
+        const z1 = pos.z - (b.min.z - r), z2 = (b.max.z + r) - pos.z;
+        if (x1 <= 0 || x2 <= 0 || y1 <= 0 || y2 <= 0 || z1 <= 0 || z2 <= 0) continue;
+        const m = Math.min(x1, x2, y1, y2, z1, z2);
+        if (m === y2) {
+          const vy = pos.y - prev.y;
+          pos.y += y2; prev.y = vy < -0.004 ? pos.y + vy * p.bounce : pos.y;
+          prev.x += (pos.x - prev.x) * fr; prev.z += (pos.z - prev.z) * fr;
+        }
+        else if (m === y1) { pos.y -= y1; prev.y = pos.y; }
+        else if (m === x1) { pos.x -= x1; prev.x = pos.x; }
+        else if (m === x2) { pos.x += x2; prev.x = pos.x; }
+        else if (m === z1) { pos.z -= z1; prev.z = pos.z; }
+        else { pos.z += z2; prev.z = pos.z; }
+      }
+    }
+  }
+
+  collideSpheres() {
+    for (const c of this.colliders) {
+      for (const p of this.particles) {
+        if (p === c || p.body === c.body) continue;
+        const dx = p.pos.x - c.pos.x, dy = p.pos.y - c.pos.y, dz = p.pos.z - c.pos.z;
+        const rr = p.r + c.r, d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 >= rr * rr || d2 < 1e-10) continue;
+        const wc = c.pinned ? 0 : c.invMass, wp = p.pinned ? 0 : p.invMass, w = wc + wp;
+        if (w === 0) continue;
+        const d = Math.sqrt(d2), k = (rr - d) / d / w;
+        p.pos.x += dx * k * wp; p.pos.y += dy * k * wp; p.pos.z += dz * k * wp;
+        c.pos.x -= dx * k * wc; c.pos.y -= dy * k * wc; c.pos.z -= dz * k * wc;
+      }
+    }
+  }
+}
+
+// Closest points between segments p1-q1 and p2-q2 (Ericson). Returns the
+// squared distance; the parameters land in segSeg.s / segSeg.t.
+export function segSeg(p1, q1, p2, q2) {
+  const d1x = q1.x - p1.x, d1y = q1.y - p1.y, d1z = q1.z - p1.z;
+  const d2x = q2.x - p2.x, d2y = q2.y - p2.y, d2z = q2.z - p2.z;
+  const rx = p1.x - p2.x, ry = p1.y - p2.y, rz = p1.z - p2.z;
+  const a = d1x * d1x + d1y * d1y + d1z * d1z;
+  const e = d2x * d2x + d2y * d2y + d2z * d2z;
+  const f = d2x * rx + d2y * ry + d2z * rz;
+  const EPS = 1e-9, cl = v => v < 0 ? 0 : v > 1 ? 1 : v;
+  let s, t;
+  if (a <= EPS && e <= EPS) { s = 0; t = 0; }
+  else if (a <= EPS) { s = 0; t = cl(f / e); }
+  else {
+    const c = d1x * rx + d1y * ry + d1z * rz;
+    if (e <= EPS) { t = 0; s = cl(-c / a); }
+    else {
+      const b = d1x * d2x + d1y * d2y + d1z * d2z, den = a * e - b * b;
+      s = den > EPS ? cl((b * f - c * e) / den) : 0;
+      t = (b * s + f) / e;
+      if (t < 0) { t = 0; s = cl(-c / a); }
+      else if (t > 1) { t = 1; s = cl((b - c) / a); }
+    }
+  }
+  segSeg.s = s; segSeg.t = t;
+  const x = rx + d1x * s - d2x * t, y = ry + d1y * s - d2y * t, z = rz + d1z * s - d2z * t;
+  return x * x + y * y + z * z;
+}

@@ -1,0 +1,27 @@
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#14171c;overflow:hidden;
+  font-family:Helvetica,Arial,sans-serif;color:#e6e9ed;
+  -webkit-user-select:none;user-select:none}
+canvas#view{display:block;width:100vw;height:100vh;outline:none}
+
+#hud{position:fixed;inset:0;pointer-events:none}
+#crosshair{position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;
+  border-radius:50%;background:#fff;box-shadow:0 0 0 2px rgba(0,0,0,.6)}
+#kills{position:absolute;left:16px;top:12px;font-weight:bold;font-size:18px;letter-spacing:.1em;
+  text-shadow:0 1px 4px #000}
+#free{position:absolute;right:16px;top:12px;font-weight:bold;color:#e8792b;letter-spacing:.1em}
+#help{position:absolute;left:16px;right:16px;bottom:12px;font-size:12px;line-height:1.6;
+  color:#fff;text-shadow:0 1px 3px #000,0 0 6px #000}
+
+#screen{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:14px;padding:24px;text-align:center;background:rgba(20,23,28,.88)}
+#screen[hidden]{display:none}
+#screen h1{margin:0;font-size:64px;letter-spacing:.12em;color:#e8792b}
+#screen p{margin:0;max-width:640px;line-height:1.5}
+#screen .small{font-size:13px;color:#aab1bb}
+#vrNote{color:#e8a56b;font-size:14px;min-height:1em}
+.row{display:flex;gap:14px;flex-wrap:wrap;justify-content:center}
+button{font:inherit;font-weight:bold;font-size:20px;padding:14px 28px;border:0;border-radius:6px;
+  background:#e8792b;color:#14171c;cursor:pointer}
+button#playDesktop{background:#2a3038;color:#e6e9ed}
+button:disabled{opacity:.35;cursor:default}

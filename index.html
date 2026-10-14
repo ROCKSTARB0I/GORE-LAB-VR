@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Gore Lab VR</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="view" tabindex="0"></canvas>
+
+<div id="hud" hidden>
+  <div id="crosshair"></div>
+  <div id="kills">KILLS 0</div>
+  <div id="free" hidden>FREECAM</div>
+  <div id="help">
+    <b>WASD</b> move · <b>Mouse</b> look (or drag / arrow keys) · <b>E</b> or right-click grab / drop · <b>Click</b> shoot / punch / swing<br>
+    <b>1</b> dummy · <b>5</b> five dummies · <b>2</b> barrel · <b>H</b> hostile · <b>T</b> slow-mo · <b>G</b> low gravity · <b>C</b> clear · <b>R</b> reset items · <b>F</b> freecam
+  </div>
+</div>
+
+<div id="screen">
+  <h1>GORE LAB</h1>
+  <p>A physics sandbox. Grab a weapon off the table and take the test dummies apart.</p>
+  <div class="row">
+    <button id="enterVR">Enter VR</button>
+    <button id="playDesktop">Play on desktop</button>
+  </div>
+  <p id="vrNote"></p>
+  <p class="small">
+    <b>Quest:</b> grip = grab / drop (point and grip to pull things to you) · trigger = shoot · left stick = walk · right stick = turn<br>
+    A = spawn dummy · B = slow-mo · X = hostile on/off · Y = clear everything · or shoot the buttons on the wall panel
+  </p>
+</div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
