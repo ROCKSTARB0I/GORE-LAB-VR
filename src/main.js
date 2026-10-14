@@ -1,8 +1,8 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=24';
-import { Dummy, faceTex } from './ragdoll.js?v=24';
-import { Gore } from './gore.js?v=24';
-import { sfx, music } from './audio.js?v=24';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=25';
+import { Dummy, faceTex } from './ragdoll.js?v=25';
+import { Gore } from './gore.js?v=25';
+import { sfx, music } from './audio.js?v=25';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -384,9 +384,12 @@ function renderMirror() {
   mv.clip.multiplyScalar(2 / mv.clip.dot(mv.q));
   e[2] = mv.clip.x; e[6] = mv.clip.y; e[10] = mv.clip.z + 1; e[14] = mv.clip.w;
   // your own head, for the mirror only
-  selfHead.position.copy(mv.c); selfHead.quaternion.copy(camera.getWorldQuaternion(tq)).multiply(flipY);
+  // the head sits where a real one would: its centre a little below and behind your eyes
+  camera.getWorldQuaternion(tq);
+  selfHead.position.set(0, -0.06, 0.085).applyQuaternion(tq).add(mv.c);
+  selfHead.quaternion.copy(tq).multiply(flipY);
   // neck: from under the jaw down to the top of the body (or a short stub with no body)
-  const jaw = mv.look.set(0, -0.085, -0.01).applyQuaternion(tq).add(mv.c);
+  const jaw = mv.look.set(0, -0.15, 0.075).applyQuaternion(tq).add(mv.c);
   const base = fullBodyOn() ? avatar.neckBase : tv2.copy(jaw).add(tv3.set(0, -0.12, 0));
   placeLimb(selfNeck, base, jaw);
   mesh.visible = false; selfHead.visible = true;
