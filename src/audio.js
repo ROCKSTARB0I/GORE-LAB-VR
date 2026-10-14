@@ -1,12 +1,32 @@
 // Synthesised sound effects -- no audio files.
 let ac = null, noiseBuf = null, sawNodes = null, flameNodes = null;
 
+let fxOut = null, verb = null, verbWet = null, verbWant = null, verbKey = '';
+// A room's reverb: tail length in seconds and how much of it you hear. null = outdoors, dry.
+function impulse(secs, damp) {
+  const n = Math.floor(ac.sampleRate * secs), buf = ac.createBuffer(2, n, ac.sampleRate), pre = Math.floor(ac.sampleRate * 0.012);
+  for (let c = 0; c < 2; c++) {
+    const d = buf.getChannelData(c);
+    let lp = 0;
+    for (let i = pre; i < n; i++) {
+      const t = (i - pre) / (n - pre);
+      lp += (Math.random() * 2 - 1 - lp) * (1 - damp * t);   // later echoes get duller
+      d[i] = lp * Math.pow(1 - t, 3.2);
+    }
+  }
+  return buf;
+}
 function ctx() {
   if (!ac) {
     ac = new (window.AudioContext || window.webkitAudioContext)();
     noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
     const d = noiseBuf.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    // sound effects go through one bus with a reverb send (music and voice chat stay dry)
+    fxOut = ac.createGain(); fxOut.connect(ac.destination);
+    verb = ac.createConvolver(); verbWet = ac.createGain(); verbWet.gain.value = 0;
+    fxOut.connect(verb).connect(verbWet).connect(ac.destination);
+    if (verbWant) sfx.reverb(verbWant);
   }
   if (ac.state === 'suspended') ac.resume();
   return ac;
@@ -18,7 +38,7 @@ function noise(dur, vol, freq, type = 'lowpass', freqEnd = freq) {
   src.buffer = noiseBuf; src.loopStart = Math.random() * 0.5; src.loop = true;
   f.type = type; f.frequency.setValueAtTime(freq, t); f.frequency.exponentialRampToValueAtTime(Math.max(30, freqEnd), t + dur);
   g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-  src.connect(f).connect(g).connect(ac.destination);
+  src.connect(f).connect(g).connect(fxOut);
   src.start(t); src.stop(t + dur);
 }
 
@@ -27,7 +47,7 @@ function tone(type, f0, f1, dur, vol) {
   const t = ac.currentTime, o = ac.createOscillator(), g = ac.createGain();
   o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
   g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-  o.connect(g).connect(ac.destination);
+  o.connect(g).connect(fxOut);
   o.start(t); o.stop(t + dur);
 }
 
@@ -61,7 +81,7 @@ export const sfx = {
     if (!flameNodes) {
       const src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
       src.buffer = noiseBuf; src.loop = true; f.type = 'lowpass'; f.frequency.value = 700; g.gain.value = 0;
-      src.connect(f).connect(g).connect(ac.destination); src.start();
+      src.connect(f).connect(g).connect(fxOut); src.start();
       flameNodes = { f, g };
     }
     flameNodes.g.gain.setTargetAtTime(on ? 0.35 : 0, ac.currentTime, 0.06);
@@ -73,7 +93,7 @@ export const sfx = {
     if (!sawNodes) {
       const o1 = ac.createOscillator(), o2 = ac.createOscillator(), lp = ac.createBiquadFilter(), g = ac.createGain();
       o1.type = 'sawtooth'; o2.type = 'square'; lp.type = 'lowpass'; g.gain.value = 0;
-      o1.connect(lp); o2.connect(lp); lp.connect(g).connect(ac.destination);
+      o1.connect(lp); o2.connect(lp); lp.connect(g).connect(fxOut);
       o1.start(); o2.start();
       sawNodes = { o1, o2, lp, g };
     }
@@ -238,7 +258,7 @@ function spatial(pos) {
   const ang = Math.atan2(dx, -dz) + listener.yaw;
   const pan = ac.createStereoPanner(); pan.pan.value = Math.max(-1, Math.min(1, Math.sin(ang)));
   const g = ac.createGain(); g.gain.value = 1 / (1 + dist * 0.35);
-  pan.connect(g).connect(ac.destination);
+  pan.connect(g).connect(fxOut);
   return pan;
 }
 // a crude vocal cry: buzzy source through a couple of vowel-ish filters
@@ -258,6 +278,15 @@ function breath(out, dur, vol, freq) {
   src.connect(f).connect(g).connect(out); src.start(t); src.stop(t + dur);
 }
 export const audioCtx = () => ctx();
+sfx.reverb = cfg => {
+  verbWant = cfg;
+  if (!ac || !verb) return;
+  const t = ac.currentTime;
+  if (!cfg) { verbWet.gain.setTargetAtTime(0, t, 0.1); return; }
+  const key = cfg.secs + '_' + cfg.damp;
+  if (key !== verbKey) { verb.buffer = impulse(cfg.secs, cfg.damp); verbKey = key; }
+  verbWet.gain.setTargetAtTime(cfg.wet, t, 0.1);
+};
 // keep a live source (a player's voice) placed: same panning and falloff as one-shot sounds
 sfx.place = (pan, gain, pos, vol = 1) => {
   const dx = pos.x - listener.x, dz = pos.z - listener.z, dist = Math.hypot(dx, dz, pos.y - listener.y);

@@ -1,7 +1,7 @@
 // Multiplayer over PeerJS (WebRTC, peer to peer). One player hosts: their peer
 // id is gorelab-<CODE> and everyone else connects to them. Game messages go
 // through the host (a star); voice goes directly between every pair of players.
-import { audioCtx, sfx } from './audio.js?v=29';
+import { audioCtx, sfx } from './audio.js?v=30';
 
 const PREFIX = 'gorelab-';
 const LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';

@@ -1,9 +1,9 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=29';
-import { Dummy, faceTex } from './ragdoll.js?v=29';
-import { Gore } from './gore.js?v=29';
-import { sfx, music } from './audio.js?v=29';
-import { net, SHIRTS, host as netHost, join as netJoin, send, sendPose, updateVoices, setMuted } from './net.js?v=29';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=30';
+import { Dummy, faceTex } from './ragdoll.js?v=30';
+import { Gore } from './gore.js?v=30';
+import { sfx, music } from './audio.js?v=30';
+import { net, SHIRTS, host as netHost, join as netJoin, send, sendPose, updateVoices, setMuted } from './net.js?v=30';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -91,7 +91,7 @@ function addSky(g, night) {
 }
 const MAPS = {
   lab: {
-    name: 'Lab', bg: 0x20242b, hemi: [0xffffff, 0x8a8f99, 2.4], sun: [0xffffff, 1.4], wallH: WALL_H,
+    name: 'Lab', verb: { secs: 1.3, wet: 0.32, damp: 0.6 }, bg: 0x20242b, hemi: [0xffffff, 0x8a8f99, 2.4], sun: [0xffffff, 1.4], wallH: WALL_H,
     build(g) {
       const tile = tiled(canvasTex(256, 256, (c, w, h) => {
         c.fillStyle = '#c9cdd3'; c.fillRect(0, 0, w, h);
@@ -115,7 +115,7 @@ const MAPS = {
     },
   },
   warehouse: {
-    name: 'Warehouse', bg: 0x0c0d10, hemi: [0xffe6c4, 0x3a3a36, 1.5], sun: [0xffd9a0, 0.9], wallH: WALL_H,
+    name: 'Warehouse', verb: { secs: 2.8, wet: 0.45, damp: 0.45 }, bg: 0x0c0d10, hemi: [0xffe6c4, 0x3a3a36, 1.5], sun: [0xffd9a0, 0.9], wallH: WALL_H,
     build(g, boxes) {
       const floorTex = tiled(noiseTex('#6f706c', 26, (c, w, h) => {
         c.strokeStyle = 'rgba(40,40,40,.5)'; c.lineWidth = 2; c.strokeRect(0, 0, w, h);
@@ -417,6 +417,7 @@ function setMap(key, fromNet = false) {
   const def = MAPS[key];
   setHalf(def.half ?? 8);
   sfx.ambience?.(def.amb);
+  sfx.reverb(def.verb ?? null);
   scene.fog = def.fog ? new THREE.Fog(def.fog[0], def.fog[1], def.fog[2]) : null;
   if (mapGroup) {
     scene.remove(mapGroup);
