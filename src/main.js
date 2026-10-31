@@ -1,10 +1,10 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=33';
-import { Dummy, faceTex } from './ragdoll.js?v=33';
-import { Gore } from './gore.js?v=33';
-import { sfx, music } from './audio.js?v=33';
-import { Explosions } from './explode.js?v=33';
-import { net, SHIRTS, host as netHost, join as netJoin, send, sendPose, updateVoices, setMuted } from './net.js?v=33';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=34';
+import { Dummy, faceTex } from './ragdoll.js?v=34';
+import { Gore } from './gore.js?v=34';
+import { sfx, music } from './audio.js?v=34';
+import { Explosions } from './explode.js?v=34';
+import { net, SHIRTS, host as netHost, join as netJoin, send, sendPose, updateVoices, setMuted } from './net.js?v=34';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);

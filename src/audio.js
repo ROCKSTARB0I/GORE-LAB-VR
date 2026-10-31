@@ -1,6 +1,6 @@
 // Synthesised sound effects -- no audio files. Weapons, impacts and bodies come
 // from sfxgen.js (built sample by sample); menus and music are made here.
-import { buffers, warm } from './sfxgen.js?v=33';
+import { buffers, warm } from './sfxgen.js?v=34';
 let ac = null, noiseBuf = null;
 
 let fxOut = null, verb = null, verbWet = null, verbWant = null, verbKey = '';

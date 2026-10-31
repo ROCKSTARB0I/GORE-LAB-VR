@@ -2,7 +2,7 @@
 // walking pose while alive ("active ragdoll"), goes limp when dead, and can
 // lose its head and limbs.
 import * as THREE from '../vendor/three.module.js';
-import { Particle, HALF, segSeg } from './physics.js?v=33';
+import { Particle, HALF, segSeg } from './physics.js?v=34';
 
 // rest pose, facing +Z
 const REST = {
@@ -157,9 +157,29 @@ const realShoe = merge([
   placed(new THREE.BoxGeometry(0.104, 0.024, 0.27), 0, 0.085, -0.047),                         // sole
 ]);
 // nose and ears, in the head's frame (face toward +z)
+// The nose: one smooth shape sculpted from a sphere. A narrow bridge between
+// the eyes, a rounded tip in the lower third, flared wings at the base, and the
+// underside shaded dark at the nostrils. Its back sinks into the face.
+function noseGeo() {
+  const g = new THREE.SphereGeometry(1, 22, 18), p = g.attributes.position, cols = [];
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), yn = p.getY(i), z = p.getZ(i), t = (yn + 1) / 2;   // t: 0 under the nose, 1 between the eyes
+    const w = 0.0075 + 0.0105 * (1 - t) ** 1.6 + 0.0045 * Math.exp(-(((t - 0.14) / 0.1) ** 2));
+    const d = 0.0055 + 0.0205 * Math.exp(-(((t - 0.27) / 0.24) ** 2));
+    const Y = -0.004 + yn * 0.027, surface = Math.sqrt(0.115 * 0.115 - Y * Y) - 0.005;
+    p.setXYZ(i, x * w, Y - (z > 0 ? 0.004 * z * (1 - t) : 0), surface + (z > 0 ? z * d : z * 0.004));
+    // nostrils: two dark ovals on the underside, and a little shadow round the wings
+    const under = yn < -0.45 && z > 0.05, hole = under && Math.abs(Math.abs(x) - 0.45) < 0.28;
+    const k = hole ? 0.32 : under ? 0.82 : t < 0.2 && Math.abs(x) > 0.75 ? 0.86 : 1;
+    cols.push(k, k * 0.97, k * 0.96);
+  }
+  g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+  g.computeVertexNormals();
+  return g;
+}
+const realNose = noseGeo();
+const noseMats = {};
 const realFace = merge([
-  placed(new THREE.ConeGeometry(0.019, 0.05, 4, 1), 0, -0.006, 0.112, -1.25, Math.PI / 4, 0, 1, 1, 0.75),   // bridge and tip
-  placed(new THREE.SphereGeometry(0.016, 8, 6), 0, -0.022, 0.123),
   placed(new THREE.SphereGeometry(1, 8, 6), 0.113, -0.005, -0.005, 0, 0.25, 0, 0.012, 0.03, 0.022),   // ears
   placed(new THREE.SphereGeometry(1, 8, 6), -0.113, -0.005, -0.005, 0, -0.25, 0, 0.012, 0.03, 0.022),
 ]);
@@ -614,6 +634,7 @@ export class Dummy {
     if (REAL) {
       // nose and ears, hair with some volume, a shirt collar and a belt
       this.faceMesh = new THREE.Mesh(realFace, this.neckMesh.material);
+      this.faceMesh.add(new THREE.Mesh(realNose, noseMats[skin] ??= new THREE.MeshLambertMaterial({ color: skin, vertexColors: true })));
       this.hairMesh = new THREE.Mesh(realHair, new THREE.MeshLambertMaterial({ color: this.hair ?? 0x2a1b10 }));
       this.hairMesh.visible = this.hair !== null && !opts.armor;
       this.headMesh.add(this.faceMesh, this.hairMesh);
