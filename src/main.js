@@ -1,9 +1,10 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=32';
-import { Dummy, faceTex } from './ragdoll.js?v=32';
-import { Gore } from './gore.js?v=32';
-import { sfx, music } from './audio.js?v=32';
-import { net, SHIRTS, host as netHost, join as netJoin, send, sendPose, updateVoices, setMuted } from './net.js?v=32';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=33';
+import { Dummy, faceTex } from './ragdoll.js?v=33';
+import { Gore } from './gore.js?v=33';
+import { sfx, music } from './audio.js?v=33';
+import { Explosions } from './explode.js?v=33';
+import { net, SHIRTS, host as netHost, join as netJoin, send, sendPose, updateVoices, setMuted } from './net.js?v=33';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -432,7 +433,7 @@ function setMap(key, fromNet = false) {
   hemi.color.setHex(def.hemi[0]); hemi.groundColor.setHex(def.hemi[1]); hemi.intensity = def.hemi[2];
   sun.color.setHex(def.sun[0]); sun.intensity = def.sun[1];
   world.boxes = [TABLE, ...boxes];
-  gore.clear(); gore.wallH = def.wallH;
+  gore.clear(); booms.clear(); gore.wallH = def.wallH;
   S.map = key; saveSettings(); drawMenu(); drawPanel(); drawMainMenu();
   if (started) fullReset();
 }
@@ -563,8 +564,7 @@ function spawnBall(x, y, z, color) {
   scene.add(b.mesh); balls.push(b);
 }
 
-const explosions = [];
-const blastGeo = new THREE.SphereGeometry(1, 16, 12);
+const booms = new Explosions(scene);
 const tv = new V3(), tv2 = new V3(), tv3 = new V3(), tq = new THREE.Quaternion();
 
 function explode(barrel) {
@@ -579,9 +579,8 @@ function explode(barrel) {
 
 // explosion at c: throws everything within R, tears up dummies, sets off other explosives
 function blast(c, R = 5, rocket = false, enemy = false) {
-  sfx.boom(); pulseAll(1, 200);
-  const mesh = new THREE.Mesh(blastGeo, new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.9, depthWrite: false }));
-  mesh.position.copy(c); scene.add(mesh); explosions.push({ mesh, t: 0, size: R / 5 });
+  sfx.boom(c); pulseAll(1, 200);
+  booms.spawn(c, R, 0);
   gore.sparks(c, 40);
   {
     // measured from the middle of the player's body
@@ -1099,7 +1098,7 @@ function clearAll() {
   for (const b of bolts) b.mesh.removeFromParent();
   bolts.length = 0; gore.clearFire?.();
   mines.length = rockets.length = 0;
-  gore.clear();
+  gore.clear(); booms.clear();
   for (const h of [...vrHands, desk]) bloody(h, -1);
 }
 
@@ -1832,8 +1831,8 @@ function fire(h, t) {
     tracer(fromV, p); sfx.spawn(); pulse(h, 0.5, 40); drawMenu();
     return;
   }
-  sfx.shot(def.sound); pulse(h, def.kick > 0.4 ? 1 : 0.6, def.kick > 0.4 ? 120 : 50);
-  if (net.on && (def.rocket || def.launcher || def.bolt)) send({ t: 'fx', k: 'shot', s: def.sound ?? '', a: [r3(fromV.x), r3(fromV.y), r3(fromV.z)], e: [] });
+  sfx.shot(def.sound ?? t.kind); pulse(h, def.kick > 0.4 ? 1 : 0.6, def.kick > 0.4 ? 120 : 50);
+  if (net.on && (def.rocket || def.launcher || def.bolt)) send({ t: 'fx', k: 'shot', s: def.sound ?? t.kind, a: [r3(fromV.x), r3(fromV.y), r3(fromV.z)], e: [] });
   if (def.rocket) { spawnRocket(fromV, dirV); return; }
   if (def.launcher) {
     // lobbed grenade: bursts on a body, otherwise on a short fuse
@@ -1843,6 +1842,7 @@ function fire(h, t) {
   }
   if (def.bolt) { spawnBolt(fromV, dirV); return; }
   const hitsPer = new Map(), clusters = new Map(), ffire = new Map(), ends = [];
+  let fleshAt = null, wallAt = null, metalAt = null;   // one impact sound of each kind per shot
   for (let i = 0; i < def.pellets; i++) {
     const sp = def.spread * steady;
     dirV.copy(NEG_Z).applyQuaternion(t.aimQ);
@@ -1866,12 +1866,13 @@ function fire(h, t) {
     if (r.kind === 'dummy' && r.dummy.armor && !def.gib && r.dummy.alive &&
       (!r.bone ? true : r.bone.name === 'head' && (r.dummy.armor > 1 || hitPt.y > r.dummy.p.head.pos.y - 0.02))) {
       // stopped by the vest or helmet
-      gore.sparks(hitPt, 6); sfx.thud();
+      gore.sparks(hitPt, 6); metalAt ??= hitPt.clone();
       r.dummy.p.chest.push(tv.copy(dirV).multiplyScalar(1.2), world.dt);
       continue;
     }
     if (r.kind === 'dummy') {
       const d = r.dummy;
+      fleshAt ??= hitPt.clone();
       gore.spray(hitPt, dirV, 9, 6, 0.35);
       gore.spray(hitPt, tv.copy(dirV).negate(), 4, 2, 0.6);
       if (d.alive && Math.random() < 0.5) sfx.grunt();
@@ -1884,21 +1885,24 @@ function fire(h, t) {
       } else d.addWound(r.bone, hitPt, dirV, 'bullet', !!def.gib);
       d.hit(r.bone, def.dmg, tv.copy(dirV).multiplyScalar(def.push), hitPt, { bullet: true, big: !!def.gib, dir: dirV });
       hitsPer.set(d, (hitsPer.get(d) || 0) + 1);
-    } else if (r.kind === 'wall') gore.sparks(hitPt, 3);
+    } else if (r.kind === 'wall') { gore.sparks(hitPt, 3); wallAt ??= hitPt.clone(); }
     else if (r.kind === 'player') {
       // friendly fire: same damage a dummy would take, double on the head
-      gore.spray(hitPt, dirV, 9, 6, 0.35);
+      gore.spray(hitPt, dirV, 9, 6, 0.35); fleshAt ??= hitPt.clone();
       ffire.set(r.player, (ffire.get(r.player) || 0) + def.dmg * 14 * (r.part === 'head' ? 2 : r.part === 'legs' ? 0.7 : 1));
     }
     else if (r.kind === 'panel') press(r.index);
-    else if (r.kind === 'barrel') { gore.sparks(hitPt, 6); if (--r.barrel.hp <= 0) explode(r.barrel); }
+    else if (r.kind === 'barrel') { gore.sparks(hitPt, 6); metalAt ??= hitPt.clone(); if (--r.barrel.hp <= 0) explode(r.barrel); }
     else if (r.kind === 'grenade') r.grenade.fuse = 0.02;
     else if (r.kind === 'ball') r.ball.p.push(tv.copy(dirV).multiplyScalar(6), world.dt);
   }
   for (const c of clusters.values()) c.d.addWound(c.bone, c.pt.multiplyScalar(1 / c.n), c.dir, 'bullet', true, c.n);
-  for (const [rp, n] of ffire) { hurtPlayer(rp, n, tv.copy(dirV).multiplyScalar(def.push * 0.3)); sfx.squish(); }
-  if (net.on) send({ t: 'fx', k: 'shot', s: def.sound ?? '', a: [r3(fromV.x), r3(fromV.y), r3(fromV.z)], e: ends });
-  if (hitsPer.size) sfx.squish();
+  for (const [rp, n] of ffire) hurtPlayer(rp, n, tv.copy(dirV).multiplyScalar(def.push * 0.3));
+  if (fleshAt) sfx.impact('flesh', fleshAt);
+  if (wallAt) sfx.impact('wall', wallAt, 0.8);
+  if (metalAt) sfx.impact('metal', metalAt, 0.8);
+  if (net.on) send({ t: 'fx', k: 'shot', s: def.sound ?? t.kind, a: [r3(fromV.x), r3(fromV.y), r3(fromV.z)], e: ends });
+  if (hitsPer.size && def.gib) sfx.squish(fleshAt);
   for (const [d, n] of hitsPer) if (n >= 4 || def.dmg >= 3) d.knockdown(2.5 + Math.random());
 }
 
@@ -1915,6 +1919,12 @@ function melee(h, t, dt) {
   const speed = tipVel.length();
   bladeDir.subVectors(t.b.pos, t.a.pos).normalize();
   const thrust = tipVel.dot(bladeDir);
+  // the whoosh of a real swing (once per swing: re-armed when the blade slows down)
+  if (speed < 1.6) h.swung = false;
+  else if (!h.swung && speed > 3.4 && speed < 80 && !def.saw) {
+    h.swung = true;
+    sfx.swing(def.heavy || def.blunt || def.len > 0.75 ? 2 : def.len > 0.4 ? 1 : 0, speed);
+  }
   if (speed > 2.8 && speed < 80) for (const rp of remotes.values()) {
     if (rp.hitCd > 0 || !rp.have || rp.dead) continue;
     let part = null;
@@ -1925,7 +1935,7 @@ function melee(h, t, dt) {
     const n = Math.min(70, (def.blunt ? 16 + def.dmg * 2 : 22 + def.dmg * 3) * (part === 'head' ? 1.5 : 1));
     hurtPlayer(rp, n, tv.copy(tipVel).normalize().multiplyScalar(def.blunt ? 2.5 : 1));
     gore.spray(h.tip, tv2.copy(tipVel).normalize(), def.blunt ? 5 : 12, 3, 0.6);
-    sfx.grunt(); def.blunt ? sfx.thud() : sfx.squish(); bloody(h, 0.15); pulse(h, 1, 70);
+    sfx.grunt(); def.blunt ? sfx.bash(h.tip) : sfx.cut(h.tip); bloody(h, 0.15); pulse(h, 1, 70);
   }
   if (speed > 1.4 && speed < 80) {
     for (const d of dummies) {
@@ -1967,7 +1977,7 @@ function melee(h, t, dt) {
         gore.spray(h.tip, tv2.copy(bladeDir).negate(), 14, 3, 0.7);
         d.addWound(hit, h.tip, bladeDir, 'stab');
         d.stab(hit, tv2.copy(bladeDir).multiplyScalar(2));
-        sfx.squish();
+        sfx.stab(h.tip);
         embedTool(t, d, hit, hit ? (hit.name === 'head' ? d.headMesh : hit.mesh) : d.torsoMesh);
         return;
       }
@@ -1978,14 +1988,14 @@ function melee(h, t, dt) {
         if (hit?.name === 'head') d.bruise = Math.min(3, d.bruise + 0.5);
         d.hp -= 20; if (d.hp <= 0) d.die();
         if (speed > 3.6) d.knockdown(2.5 + Math.random());
-        sfx.thud();
+        sfx.bash(at, Math.min(1.2, 0.5 + speed * 0.1));
       } else {
         gore.spray(at, tv, 16, 4, 0.6);
         d.addWound(hit, at, tv, 'slash');
         if (touch) { if (d.disembowel(gutV) && hit) d.addWound(null, gutV, tv, 'slash'); }
         else if (!hit) d.disembowel(at);
         d.hit(hit, hit ? def.dmg : 3, tv2.copy(tv).multiplyScalar(2.5), at);
-        sfx.slice();
+        sfx.cut(at);
       }
     }
   }
@@ -2136,7 +2146,7 @@ function pushHands() {
       if (!part) continue;
       h.punchCd = 0.3; rp.hitCd = 0.3;
       hurtPlayer(rp, speed * (part === 'head' ? 3 : 2), tv.copy(h.vel).multiplyScalar(0.4));
-      sfx.thud(); pulse(h, 1, 70);
+      sfx.punch(speed, part === 'head', h.pos); pulse(h, 1, 70);
     }
     if (h.held) continue;
     for (const p of world.particles) {
@@ -2174,7 +2184,7 @@ function pushHands() {
         if (speed > 4.2) dm.knockdown(2 + Math.random());
         if (speed > 3.2) { gore.spray(p.pos, tv.copy(h.vel).normalize(), head ? 10 : 4, 3, 0.7); bloody(h, 0.2); }
         if (dm.hp <= 0) dm.die();
-        sfx.thud(); pulse(h, 1, 70);
+        sfx.punch(speed, head, p.pos); pulse(h, 1, 70);
       }
     }
   }
@@ -2579,6 +2589,25 @@ function updateMainMenu() {
   if (paused && (hover !== UI.hover || side !== UI.side)) { UI.hover = hover; UI.side = side; drawMainMenu(); }
 }
 
+// the thump of a body hitting the floor: watch the heavy parts for a hard landing
+function bodyFalls(dt) {
+  for (const d of dummies) {
+    d.fallCd = (d.fallCd ?? 0) - dt;
+    for (const k of ['pelvis', 'chest', 'head']) {
+      const p = d.p[k];
+      if (!p || p.pinned || p.gone) continue;
+      const vy = (p.pos.y - p.prev.y) / world.dt, was = p.fallV ?? 0;
+      p.fallV = vy;
+      // was coming down fast last frame, now resting on the floor
+      if (was < -1.5 && vy > -0.4 && p.pos.y < p.r + 0.06 && d.fallCd <= 0) {
+        d.fallCd = 0.35;
+        sfx.bodyfall(p.pos, -was * (k === 'head' ? 0.6 : 1));
+        break;
+      }
+    }
+  }
+}
+
 // ------------------------------------------------------------ voices
 const ALWAYS = new Set(['die', 'burnDie', 'heart', 'passout', 'dismember', 'dismemberArm']);
 // One voice per dummy: a big line (death, losing a limb...) cuts off whatever he was
@@ -2654,7 +2683,7 @@ function updateBolts(sdt) {
       hitPt.copy(b.pos).addScaledVector(tv2, r.t);
       if (r.kind === 'player') {
         hurtPlayer(r.player, r.part === 'head' ? 80 : 45, tv.copy(tv2).multiplyScalar(1.5));
-        gore.spray(hitPt, tv2, 10, 3, 0.5); sfx.squish();
+        gore.spray(hitPt, tv2, 10, 3, 0.5); sfx.stab(hitPt);
         b.mesh.removeFromParent(); bolts.splice(i, 1); continue;
       }
       b.stuck = true; b.life = 20;
@@ -2662,7 +2691,7 @@ function updateBolts(sdt) {
         const d = r.dummy, part = r.bone ? (r.bone.name === 'head' ? d.headMesh : r.bone.mesh) : d.torsoMesh;
         d.addWound(r.bone, hitPt, tv2, 'stab');
         d.hit(r.bone, 2.5, tv.copy(tv2).multiplyScalar(4), hitPt);
-        gore.spray(hitPt, tv2, 10, 3, 0.5); sfx.squish();
+        gore.spray(hitPt, tv2, 10, 3, 0.5); sfx.stab(hitPt);
         // pinned in the body part, sticking out the way it went in
         qInv.copy(part.quaternion).invert();
         b.mesh.position.copy(hitPt).addScaledVector(tv2, 0.06).sub(part.position).applyQuaternion(qInv).divideScalar(d.s);
@@ -2711,7 +2740,7 @@ function enemyFire(d, head) {
   t.mesh.updateMatrixWorld(true);
   const from = t.muzzle ? t.muzzle.getWorldPosition(tv2) : tv2.copy(t.b.pos);
   t.flashT = 0.05; if (t.flash) t.flash.visible = true;
-  sfx.shot(def.sound);
+  sfx.shot(def.sound ?? t.kind, from);
   dirV.subVectors(head, from).normalize();
   if (def.rocket) { spawnRocket(from, dirV); return; }
   if (def.launcher) { const g = spawnGrenade(from.x, from.y, from.z); g.p.setVelocity(tv.copy(dirV).multiplyScalar(11).add(tv3.set(0, 2.5, 0)), world.dt); g.fuse = 1.8; g.impact = true; return; }
@@ -2772,7 +2801,7 @@ function updateEnemies(sdt) {
         d.shootT = 1.3 + Math.random() * 1.3;
         const from = tv2.copy(NEG_Z).applyQuaternion(d.item.mesh.quaternion).multiplyScalar(0.2 * d.s).add(d.item.mesh.position);
         const to = tv3.copy(head).add(tv.set((Math.random() - 0.5) * 0.5, (Math.random() - 0.5) * 0.4, (Math.random() - 0.5) * 0.5));
-        tracer(from, to); sfx.shot('pistol');
+        tracer(from, to); sfx.shot('pistol', from);
         if (Math.random() < 0.4) { damagePlayer(8); if (Math.random() < 0.5) Dummy.say(d, 'taunt'); }
       }
     }
@@ -2977,7 +3006,7 @@ net.onKill = m => {
 };
 net.onFx = m => {
   if (m.k !== 'shot' || !started) return;
-  sfx.shot(m.s || undefined);
+  sfx.shot(m.s || 'pistol', tv3.fromArray(m.a));
   const a = tv.fromArray(m.a);
   for (let i = 0; i + 2 < m.e.length; i += 3) tracer(a, tv2.fromArray(m.e, i));
 };
@@ -3084,6 +3113,7 @@ function frame(time) {
     if (n === 4) acc = 0;
 
     for (const d of dummies) d.sync();
+    bodyFalls(dt);
     syncItems();
     for (const t of tools) {
       if (t.flashT > 0 && (t.flashT -= dt) <= 0) t.flash.visible = false;
@@ -3110,11 +3140,7 @@ function frame(time) {
     }
     gore.sync(time);
     for (const tr of tracers) if (tr.m.visible) { tr.t -= dt; tr.m.material.opacity = Math.max(0, tr.t / 0.07); if (tr.t <= 0) tr.m.visible = false; }
-    for (let i = explosions.length - 1; i >= 0; i--) {
-      const e = explosions[i]; e.t += dt;
-      e.mesh.scale.setScalar((0.3 + e.t * 16) * (e.size ?? 1)); e.mesh.material.opacity = Math.max(0, 0.9 - e.t * 3.2);
-      if (e.t > 0.3) { scene.remove(e.mesh); e.mesh.material.dispose(); explosions.splice(i, 1); }
-    }
+    booms.update(dt * world.scale);
   }
   if (mirror && started) renderMirror();
   renderer.render(scene, camera);
@@ -3122,5 +3148,5 @@ function frame(time) {
 renderer.setAnimationLoop(frame);
 
 // for poking at things from the console
-window.lab = { net, remotes, myPose, updateRemotes, fire, hitscan, hurtPlayer, get mirror() { return mirror; }, renderer, step(ms = 16.7, n = 1) { for (let i = 0; i < n; i++) frame(last + ms); }, snap() { frame(last + 16.7); return renderer.domElement.toDataURL('image/jpeg', 0.6); }, makeTool, setGore, bolts, holsters, jump, HELP, UI, UI_ROWS, MAPS, setMap, setTrack, setHeight, openMenu, closeMenu, menuActivate, music, get paused() { return paused; }, P, SV, damagePlayer, startSurvival, world, dummies, tools, barrels, balls, grenades, mines, rockets, menu, menuMove, S, gore, desk, rig, camera, press, grab, drop, spawnDummy, spawnBarrel,
+window.lab = { booms, blast, net, remotes, myPose, updateRemotes, fire, hitscan, hurtPlayer, get mirror() { return mirror; }, renderer, step(ms = 16.7, n = 1) { for (let i = 0; i < n; i++) frame(last + ms); }, snap() { frame(last + 16.7); return renderer.domElement.toDataURL('image/jpeg', 0.6); }, makeTool, setGore, bolts, holsters, jump, HELP, UI, UI_ROWS, MAPS, setMap, setTrack, setHeight, openMenu, closeMenu, menuActivate, music, get paused() { return paused; }, P, SV, damagePlayer, startSurvival, world, dummies, tools, barrels, balls, grenades, mines, rockets, menu, menuMove, S, gore, desk, rig, camera, press, grab, drop, spawnDummy, spawnBarrel,
   look(y, p) { yaw = y; pitch = p; }, get state() { return { started, inVR, freecam, locked, noLock }; } };

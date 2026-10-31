@@ -1,5 +1,7 @@
-// Synthesised sound effects -- no audio files.
-let ac = null, noiseBuf = null, sawNodes = null, flameNodes = null;
+// Synthesised sound effects -- no audio files. Weapons, impacts and bodies come
+// from sfxgen.js (built sample by sample); menus and music are made here.
+import { buffers, warm } from './sfxgen.js?v=33';
+let ac = null, noiseBuf = null;
 
 let fxOut = null, verb = null, verbWet = null, verbWant = null, verbKey = '';
 // A room's reverb: tail length in seconds and how much of it you hear. null = outdoors, dry.
@@ -23,9 +25,14 @@ function ctx() {
     const d = noiseBuf.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     // sound effects go through one bus with a reverb send (music and voice chat stay dry)
-    fxOut = ac.createGain(); fxOut.connect(ac.destination);
+    // a limiter keeps a room full of gunfire from clipping
+    const lim = ac.createDynamicsCompressor();
+    lim.threshold.value = -9; lim.knee.value = 6; lim.ratio.value = 8; lim.attack.value = 0.002; lim.release.value = 0.15;
+    lim.connect(ac.destination);
+    fxOut = ac.createGain(); fxOut.connect(lim);
     verb = ac.createConvolver(); verbWet = ac.createGain(); verbWet.gain.value = 0;
-    fxOut.connect(verb).connect(verbWet).connect(ac.destination);
+    fxOut.connect(verb).connect(verbWet).connect(lim);
+    warm(ac);
     if (verbWant) sfx.reverb(verbWant);
   }
   if (ac.state === 'suspended') ac.resume();
@@ -51,57 +58,73 @@ function tone(type, f0, f1, dur, vol) {
   o.start(t); o.stop(t + dur);
 }
 
+// one of the generated sounds (a random variation), optionally placed in the world
+function play(name, pos, vol = 1, rate = 1, jitter = 0.05) {
+  if (!ac) return null;
+  const list = buffers(ac, name);
+  if (!list) return null;
+  const src = ac.createBufferSource(), g = ac.createGain();
+  src.buffer = list[Math.floor(Math.random() * list.length)];
+  src.playbackRate.value = rate * (1 + (Math.random() * 2 - 1) * jitter);
+  g.gain.value = vol;
+  src.connect(g).connect(pos ? spatial(pos) : fxOut); src.start();
+  return src;
+}
+const GUN_SOUND = { pistol: 'pistol', revolver: 'revolver', smg: 'smg', rifle: 'rifle', shotgun: 'shotgun', sniper: 'sniper', minigun: 'minigun', launcher: 'launcher', rocket: 'rocket', crossbow: 'crossbow' };
+let sawLoops = null, flameLoop = null;
+function loop(name) {
+  const src = ac.createBufferSource(), g = ac.createGain();
+  src.buffer = buffers(ac, name)[0]; src.loop = true; g.gain.value = 0;
+  src.connect(g).connect(fxOut); src.start();
+  return { src, g };
+}
+
 export const sfx = {
   init() { ctx(); loadVoices(); },
-  shot(kind) {
-    if (kind === 'shotgun') { noise(0.35, 0.9, 2600, 'lowpass', 300); tone('sine', 140, 40, 0.3, 0.9); }
-    else if (kind === 'revolver') { noise(0.25, 0.8, 3000, 'lowpass', 400); tone('sine', 170, 45, 0.22, 0.8); }
-    else if (kind === 'rifle') { noise(0.12, 0.6, 3800, 'lowpass', 700); tone('square', 190, 70, 0.09, 0.3); }
-    else if (kind === 'rocket') { noise(0.7, 0.7, 500, 'bandpass', 2500); tone('sawtooth', 90, 300, 0.5, 0.2); }
-    else if (kind === 'sniper') { noise(0.6, 1.0, 5000, 'lowpass', 200); tone('sine', 120, 30, 0.5, 1.0); }
-    else if (kind === 'minigun') { noise(0.06, 0.4, 4500, 'lowpass', 1200); tone('square', 300, 120, 0.04, 0.18); }
-    else if (kind === 'launcher') { tone('sine', 160, 60, 0.18, 0.7); noise(0.12, 0.3, 900, 'lowpass', 200); }
-    else if (kind === 'crossbow') { tone('square', 520, 140, 0.12, 0.25); noise(0.05, 0.3, 3000, 'bandpass', 800); }
-    else if (kind === 'smg') { noise(0.09, 0.45, 4200, 'lowpass', 900); tone('square', 260, 90, 0.07, 0.25); }
-    else { noise(0.14, 0.6, 3600, 'lowpass', 600); tone('sine', 200, 60, 0.12, 0.6); }
-  },
-  squish() { noise(0.16, 0.5, 900, 'lowpass', 180); tone('sine', 180, 70, 0.1, 0.25); },
-  splat() { noise(0.3, 0.6, 700, 'lowpass', 120); tone('sine', 120, 45, 0.2, 0.4); },
-  thud() { tone('sine', 110, 45, 0.14, 0.7); noise(0.06, 0.3, 500); },
-  slice() { noise(0.14, 0.4, 5000, 'bandpass', 1200); noise(0.2, 0.4, 800, 'lowpass', 150); },
-  boom() { noise(0.9, 1.0, 1800, 'lowpass', 60); tone('sine', 90, 25, 0.8, 1.0); },
-  grunt() { const f = 150 + Math.random() * 90; tone('sawtooth', f, f * 0.55, 0.22, 0.22); noise(0.18, 0.12, 900, 'bandpass', 500); },
+  // pos: where the gun is (other players and enemies); your own guns are right at your hands
+  shot(kind, pos) { play(GUN_SOUND[kind] ?? 'pistol', pos, kind === 'minigun' ? 0.75 : 1, 1, kind === 'minigun' ? 0.08 : 0.04); },
+  squish(pos) { play('squish', pos, 0.8); },
+  splat(pos) { play('splat', pos); },
+  thud(pos) { play('punchBody', pos, 0.9); },
+  slice(pos) { play('cut', pos); play('swingMedium', pos, 0.5); },
+  boom(pos) { play('explosion', pos, 1.2, 1, 0.08); },
+  grunt() { const f = 150 + Math.random() * 90; tone('sawtooth', f, f * 0.55, 0.22, 0.12); noise(0.18, 0.06, 900, 'bandpass', 500); },
   spawn() { tone('sine', 400, 1200, 0.12, 0.25); tone('triangle', 800, 1600, 0.1, 0.12); },
   tick() { tone('square', 1100, 1100, 0.03, 0.08); },
-  hurt() { tone('sawtooth', 220, 90, 0.18, 0.35); noise(0.12, 0.4, 600); },
+  hurt() { play('hurt', null, 0.9); },
   wave() { tone('square', 330, 330, 0.12, 0.2); setTimeout(() => tone('square', 495, 495, 0.2, 0.2), 140); },
+  // a round arriving: 'flesh', 'wall' (sometimes whining off as a ricochet) or 'metal'
+  impact(kind, pos, vol = 1) {
+    if (kind === 'wall' && Math.random() < 0.22) { play('ricochet', pos, vol * 0.9); return; }
+    play(kind === 'metal' ? 'metalHit' : kind, pos, vol);
+  },
+  // a fist landing: harder and on the face = smack and crunch
+  punch(speed, face, pos) {
+    const v = Math.min(1.2, 0.45 + speed * 0.13);
+    play(face ? (speed > 4.5 ? 'punchCrunch' : 'punchFace') : 'punchBody', pos, v, 1.05 - Math.min(0.15, speed * 0.02));
+  },
+  // the air a swing moves: weight 0 light, 1 medium, 2 heavy
+  swing(weight, speed = 4) { play(['swingLight', 'swingMedium', 'swingHeavy'][weight], null, Math.min(1, 0.35 + speed * 0.08), 0.9 + Math.min(0.3, speed * 0.03), 0.08); },
+  bash(pos, vol = 1) { play('bash', pos, vol); },
+  stab(pos) { play('stab', pos); },
+  cut(pos) { play('cut', pos); },
+  // a body hitting the floor; strength ~ how fast it landed
+  bodyfall(pos, strength = 1) { play('bodyfall', pos, Math.min(1.2, 0.3 + strength * 0.25), 1.05 - Math.min(0.2, strength * 0.04)); },
   // flamethrower roar while it's firing
   flame(on) {
-    if (!ac || (!flameNodes && !on)) return;
-    if (!flameNodes) {
-      const src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
-      src.buffer = noiseBuf; src.loop = true; f.type = 'lowpass'; f.frequency.value = 700; g.gain.value = 0;
-      src.connect(f).connect(g).connect(fxOut); src.start();
-      flameNodes = { f, g };
-    }
-    flameNodes.g.gain.setTargetAtTime(on ? 0.35 : 0, ac.currentTime, 0.06);
-    flameNodes.f.frequency.setTargetAtTime(on ? 600 + Math.random() * 500 : 400, ac.currentTime, 0.05);
+    if (!ac || (!flameLoop && !on)) return;
+    flameLoop ??= loop('flame');
+    flameLoop.g.gain.setTargetAtTime(on ? 0.55 : 0, ac.currentTime, on ? 0.04 : 0.12);
   },
   // level: 0 off, 1 idling in the hand, 2 revving; cutting = biting into something
   saw(level, cutting) {
-    if (!ac || (!sawNodes && !level)) return;
-    if (!sawNodes) {
-      const o1 = ac.createOscillator(), o2 = ac.createOscillator(), lp = ac.createBiquadFilter(), g = ac.createGain();
-      o1.type = 'sawtooth'; o2.type = 'square'; lp.type = 'lowpass'; g.gain.value = 0;
-      o1.connect(lp); o2.connect(lp); lp.connect(g).connect(fxOut);
-      o1.start(); o2.start();
-      sawNodes = { o1, o2, lp, g };
-    }
-    const t = ac.currentTime, n = sawNodes;
-    const f = level === 2 ? (cutting ? 74 + Math.random() * 14 : 104) : 38;
-    n.o1.frequency.setTargetAtTime(f, t, 0.05); n.o2.frequency.setTargetAtTime(f * 1.51, t, 0.05);
-    n.lp.frequency.setTargetAtTime(level === 2 ? (cutting ? 2400 : 1300) : 500, t, 0.05);
-    n.g.gain.setTargetAtTime(level === 2 ? (cutting ? 0.3 : 0.2) : level === 1 ? 0.045 : 0, t, 0.04);
+    if (!ac || (!sawLoops && !level)) return;
+    sawLoops ??= { engine: loop('sawEngine'), grind: loop('sawGrind') };
+    const t = ac.currentTime, { engine, grind } = sawLoops;
+    // the engine note follows the revs; cutting drags it down a little
+    engine.src.playbackRate.setTargetAtTime(level === 2 ? (cutting ? 1.85 + Math.random() * 0.15 : 2.45) : 1, t, level === 2 ? 0.12 : 0.25);
+    engine.g.gain.setTargetAtTime(level === 2 ? 0.42 : level === 1 ? 0.16 : 0, t, 0.05);
+    grind.g.gain.setTargetAtTime(cutting && level === 2 ? 0.45 : 0, t, 0.04);
   },
   beep() { tone('square', 660, 880, 0.08, 0.15); },
 };
